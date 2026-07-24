@@ -69,9 +69,18 @@ if (!fs.existsSync(contractPath)) {
 
 const Ballot = await import(pathToFileURL(contractPath).href);
 
+// Provide a mock witness for deployment. The constructor doesn't call
+// getVoterSecret(), but the CompiledContract API requires witnesses
+// when the contract declares them.
+const deployWitnesses = {
+  getVoterSecret(_context: any): [any, { bytes: Uint8Array }] {
+    return [{}, { bytes: new Uint8Array(32) }];
+  },
+};
+
 const compiledContract = CompiledContract.make('ballot', Ballot.Contract).pipe(
-  CompiledContract.withVacantWitnesses,
-  CompiledContract.withCompiledFileAssets(zkConfigPath),
+  (cc) => CompiledContract.withWitnesses(cc as any, deployWitnesses as any),
+  (cc) => CompiledContract.withCompiledFileAssets(cc as any, zkConfigPath),
 );
 
 // ─── Providers ─────────────────────────────────────────────────────────────────
@@ -251,7 +260,7 @@ async function main() {
     try {
       deployed = await deployContract(providers, {
         compiledContract: compiledContract as any,
-        args: [],
+        args: ['Midnight Ballot Election 2026'],
         privateStateId: PRIVATE_STATE_ID,
         initialPrivateState: {},
       });

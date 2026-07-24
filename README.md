@@ -4,10 +4,11 @@
 
 ## Contract Address
 
-| Network  | Address                          |
-|----------|----------------------------------|
-| Preview  | [DEPLOY AFTER FAUCET FUNDING]    |
-| Preprod  | [DEPLOY AFTER FAUCET FUNDING]    |
+| Network    | Address                                                              |
+|------------|----------------------------------------------------------------------|
+| Undeployed | `55c9ca11219e8717efbd9a520dd6ec0011fa056d38638b19d1e8972d39de78ea`  |
+| Preview    | [DEPLOY AFTER FAUCET FUNDING]                                        |
+| Preprod    | [DEPLOY AFTER FAUCET FUNDING]                                        |
 
 ## What This Does
 
@@ -203,9 +204,13 @@ Compiling 4 circuits:
   12 passed | 8 skipped | 0 failed
 ```
 
-### Contract Address
+### Deployed Contract Address
 
-*[Will be updated after faucet funding and deployment]*
+```
+Undeployed (local devnet): 55c9ca11219e8717efbd9a520dd6ec0011fa056d38638b19d1e8972d39de78ea
+```
+
+*Preview/Preprod addresses will be added after faucet funding.*
 
 ---
 
