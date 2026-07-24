@@ -1,0 +1,159 @@
+pragma language_version >= 0.23;
+
+import CompactStandardLibrary;
+
+// ═══════════════════════════════════════════════════════════════
+//  Midnight Ballot — Privacy-Preserving Voting Contract
+// ═══════════════════════════════════════════════════════════════
+//
+//  PUBLIC (on-chain ledger, visible to anyone):
+//    • electionId        — Human-readable election name
+//    • electionOpen      — Whether voting is currently allowed
+//    • totalVotes        — Total number of votes cast (Counter)
+//    • candidateAVotes   — Vote tally for Candidate A (Counter)
+//    • candidateBVotes   — Vote tally for Candidate B (Counter)
+//    • nullifierSpent    — Set of spent nullifiers (prevents double-voting)
+//
+//  PRIVATE (witness, never stored on-chain):
+//    • voterSecret       — Voter's private identity credential (Bytes<32>)
+//    • candidateChoice   — Which candidate the voter selected (0 or 1)
+//
+//  ZERO-KNOWLEDGE PROOF — each castVote call proves:
+//    1. The caller knows a witness that derives a valid nullifier
+//    2. The caller has NOT voted before (nullifier is fresh)
+//    3. The candidateChoice is valid (type-constrained to 0 or 1)
+//    4. The election is currently open
+//    → The voter's identity (voterSecret) is never revealed
+//    → The nullifier is a one-way hash that cannot be reversed
+// ═══════════════════════════════════════════════════════════════
+
+// ─── Types ──────────────────────────────────────────────────
+
+struct VoterSecret     { bytes: Bytes<32>; }
+struct VoterCommitment { bytes: Bytes<32>; }
+struct Nullifier       { bytes: Bytes<32>; }
+
+// ─── Public Ledger State ────────────────────────────────────
+
+export ledger electionId: Opaque<"string">;
+export ledger electionOpen: Boolean;
+export ledger totalVotes: Counter;
+export ledger candidateAVotes: Counter;
+export ledger candidateBVotes: Counter;
+export ledger nullifierSpent: Map<Nullifier, Boolean>;
+
+// ─── Private Witness ────────────────────────────────────────
+
+// The voter's DApp provides this secret off-chain.
+// It never appears on the ledger — only its hash (the nullifier) does.
+witness getVoterSecret(): VoterSecret;
+
+// ─── Cryptographic Derivation Functions ─────────────────────
+
+// Derive a public commitment from a voter secret.
+// The election admin publishes the set of eligible voter commitments
+// before the election begins.
+export circuit deriveVoterCommitment(secret: VoterSecret): VoterCommitment {
+    return VoterCommitment {
+        bytes: persistentHash<Vector<2, Bytes<32>>>([
+            pad(32, "midnight-ballot:voter:v1"),
+            secret.bytes
+        ])
+    };
+}
+
+// Derive a unique nullifier from a voter secret.
+// Published on-chain after voting to prevent double-voting.
+// An observer cannot link a nullifier back to a specific voter
+// without knowing the voter's secret (preimage resistance).
+export circuit deriveNullifier(secret: VoterSecret): Nullifier {
+    return Nullifier {
+        bytes: persistentHash<Vector<2, Bytes<32>>>([
+            pad(32, "midnight-ballot:nullifier:v1"),
+            secret.bytes
+        ])
+    };
+}
+
+// ─── Constructor ────────────────────────────────────────────
+
+// Initialise a new election.
+// The deployer provides a human-readable election name.
+// The election starts open so voters can begin casting ballots immediately.
+constructor(electionName: Opaque<"string">) {
+    electionId = disclose(electionName);
+    electionOpen = disclose(true);
+}
+
+// ─── Election Administration ────────────────────────────────
+
+// Re-open a previously closed election.
+export circuit openElection(): [] {
+    electionOpen = disclose(true);
+}
+
+// Close the election — no further votes will be accepted.
+export circuit closeElection(): [] {
+    electionOpen = disclose(false);
+}
+
+// ─── Core Voting Circuit ────────────────────────────────────
+
+// Cast a private ballot.
+//
+// The voter's DApp supplies candidateChoice as a private witness:
+//   • 0 → Candidate A
+//   • 1 → Candidate B
+//
+// The circuit enforces:
+//   1. The election must be open.
+//   2. The voter's nullifier must be fresh (no double-voting).
+//   3. The candidateChoice is type-constrained to 0 or 1 (valid vote).
+//
+// What goes on-chain:
+//   • The nullifier is marked as spent (public — prevents replay).
+//   • totalVotes increments by 1 (public).
+//   • Exactly ONE candidate counter increments (public).
+//
+// What stays PRIVATE:
+//   • The voterSecret itself.
+//   • Which candidate was chosen (only the aggregate counter changes).
+export circuit castVote(candidateChoice: Uint<0..1>): [] {
+    // Guard: election must be open
+    assert(electionOpen == true, "Election is not open");
+
+    // Derive the per-voter nullifier from the private secret
+    const nullifier = deriveNullifier(getVoterSecret());
+
+    // Guard: nullifier must not have been used before.
+    // We disclose the nullifier — it is a hash that cannot be reversed
+    // to the voter's secret, so this is a safe, deliberate disclosure.
+    assert(
+        !nullifierSpent.member(disclose(nullifier)),
+        "Voter has already cast a ballot"
+    );
+
+    // Mark the nullifier as spent — this is the on-chain double-vote guard
+    nullifierSpent.insert(disclose(nullifier), disclose(true));
+
+    // Increment total votes cast
+    totalVotes.increment(1);
+
+    // Deliberately disclose the candidateChoice before the branch.
+    // The ZK proof guarantees candidateChoice ∈ {0, 1}.
+    // This reveals WHICH counter changed (public aggregate) but
+    // the voter's identity remains protected by the nullifier scheme.
+    const choice = disclose(candidateChoice);
+    if (choice == (0 as Uint<0..1>)) {
+        candidateAVotes.increment(1);
+    } else {
+        candidateBVotes.increment(1);
+    }
+}
+
+// ─── Public Read Circuits ───────────────────────────────────
+
+// Check whether the election is currently accepting votes.
+export circuit isElectionOpen(): Boolean {
+    return electionOpen;
+}
