@@ -14,14 +14,19 @@ import CompactStandardLibrary;
 //    • candidateBVotes   — Vote tally for Candidate B (Counter)
 //    • nullifierSpent    — Set of spent nullifiers (prevents double-voting)
 //
-//  PRIVATE (witness, never stored on-chain):
+//  PRIVATE (witness, never stored on-chain, never disclosed):
 //    • voterSecret       — Voter's private identity credential (Bytes<32>)
-//    • candidateChoice   — Which candidate the voter selected (0 or 1)
+//
+//  DISCLOSED BY DESIGN (an explicit disclose() reveals these — never the secret):
+//    • nullifier         — Hash of voterSecret; publishing it is what makes
+//                          double-voting detectable without revealing the voter
+//    • candidateChoice   — Circuit argument, disclosed so the public tally can
+//                          move: which tally grew is public, who grew it is not
 //
 //  ZERO-KNOWLEDGE PROOF — each castVote call proves:
-//    1. The caller knows a witness that derives a valid nullifier
+//    1. The caller knows a witness whose hash is the nullifier it publishes
 //    2. The caller has NOT voted before (nullifier is fresh)
-//    3. The candidateChoice is valid (type-constrained to 0 or 1)
+//    3. candidateChoice is a valid value (Uint<0..2> admits exactly 0 or 1)
 //    4. The election is currently open
 //    → The voter's identity (voterSecret) is never revealed
 //    → The nullifier is a one-way hash that cannot be reversed
@@ -101,9 +106,13 @@ export circuit closeElection(): [] {
 
 // Cast a private ballot.
 //
-// The voter's DApp supplies candidateChoice as a private witness:
+// The voter's DApp passes candidateChoice as a circuit argument:
 //   • 0 → Candidate A
 //   • 1 → Candidate B
+//
+// Note the bound: Compact's `Uint<a..b>` admits a..b-1, so Uint<0..2> is the
+// type that admits {0, 1}. Uint<0..1> would admit only {0} and make
+// Candidate B unreachable.
 //
 // The circuit enforces:
 //   1. The election must be open.
@@ -116,9 +125,10 @@ export circuit closeElection(): [] {
 //   • Exactly ONE candidate counter increments (public).
 //
 // What stays PRIVATE:
-//   • The voterSecret itself.
-//   • Which candidate was chosen (only the aggregate counter changes).
-export circuit castVote(candidateChoice: Uint<0..1>): [] {
+//   • The voterSecret itself — only its hash (the nullifier) is published.
+//   The candidateChoice is disclosed by design (see the disclose() below):
+//   which tally moved is public, which voter moved it is not.
+export circuit castVote(candidateChoice: Uint<0..2>): [] {
     // Guard: election must be open
     assert(electionOpen == true, "Election is not open");
 
@@ -140,11 +150,11 @@ export circuit castVote(candidateChoice: Uint<0..1>): [] {
     totalVotes.increment(1);
 
     // Deliberately disclose the candidateChoice before the branch.
-    // The ZK proof guarantees candidateChoice ∈ {0, 1}.
+    // The type Uint<0..2> already guarantees candidateChoice ∈ {0, 1}.
     // This reveals WHICH counter changed (public aggregate) but
     // the voter's identity remains protected by the nullifier scheme.
     const choice = disclose(candidateChoice);
-    if (choice == (0 as Uint<0..1>)) {
+    if (choice == (0 as Uint<0..2>)) {
         candidateAVotes.increment(1);
     } else {
         candidateBVotes.increment(1);

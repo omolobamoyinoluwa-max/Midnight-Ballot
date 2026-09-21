@@ -37,23 +37,29 @@ Midnight Ballot demonstrates how zero-knowledge smart contracts on the Midnight 
 | `candidateBVotes` | `Counter` | Aggregate tally for Candidate B |
 | `nullifierSpent` | `Map<Nullifier, Boolean>` | Set of spent nullifiers (prevents double-voting) |
 
-### PRIVATE (witness, never on-chain)
+### PRIVATE (witness, never on-chain, never disclosed)
 
 | Field | Type | Description |
 |---|---|---|
-| `voterSecret` | `Bytes<32>` | Voter's private identity credential |
-| `candidateChoice` | `Uint<0..1>` | 0 = Candidate A, 1 = Candidate B |
+| `voterSecret` | `Bytes<32>` | Voter's private identity credential — the only witness |
+
+### DISCLOSED BY DESIGN (revealed by an explicit `disclose()`, never the secret)
+
+| Value | Type | Why it is public |
+|---|---|---|
+| `nullifier` | `Bytes<32>` | Publishing the hash of the voter secret is what makes double-voting detectable without identifying the voter |
+| `candidateChoice` | `Uint<0..2>` | Circuit argument; disclosing it is what lets the public tally move — *which* tally grew is public, *who* grew it is not |
 
 ### ZERO-KNOWLEDGE PROOF
 
 Each `castVote` call proves, without revealing:
 
-- **Knowledge of a voter secret** — the caller provides a witness (`getVoterSecret`) that derives a valid nullifier via `persistentHash`
+- **Knowledge of a voter secret** — the caller provides a witness (`getVoterSecret`) whose hash is the nullifier it publishes
 - **No double-voting** — the derived nullifier is checked against `nullifierSpent` and marked as spent on first use
-- **Valid vote** — the `candidateChoice` parameter is type-constrained to `Uint<0..1>`
+- **Valid vote** — `candidateChoice` is type-constrained: Compact's `Uint<a..b>` admits `a..b-1`, so `Uint<0..2>` admits exactly `{0, 1}`. (`Uint<0..1>` would admit only `0` and make Candidate B unreachable — the bound is deliberate.)
 - **Election open** — an `assert(electionOpen == true)` gate prevents voting after closure
 
-The voter's identity (`voterSecret`) is never disclosed. The nullifier is a one-way hash with domain-separated tags that cannot be reversed to the original secret. The `disclose()` calls on the nullifier and candidate choice are deliberate and documented — they enable the public double-vote guard and aggregate tally update while preserving voter anonymity.
+The voter's identity (`voterSecret`) is the one thing never disclosed: only its hash (the nullifier) is published, and `persistentHash` with domain-separated tags cannot be reversed to the secret. The `disclose()` calls on the nullifier and the candidate choice are deliberate and commented in the contract — they enable the public double-vote guard and the public tally while preserving voter anonymity.
 
 ## Tech Stack
 
@@ -72,16 +78,36 @@ The voter's identity (`voterSecret`) is never disclosed. The nullifier is a one-
 ### Install the Compact toolchain
 
 ```bash
-# Install the Compact compiler
+# 1. Install the Compact launcher
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/midnightntwrk/compact/releases/latest/download/compact-installer.sh | sh
 
-# Pull and run the proof server
-docker pull midnightnetwork/proof-server
-docker run -d -p 6300:6300 --name proof-server midnightnetwork/proof-server
+# 2. Pin the compiler to the version this repo's SDK stack expects
+#    (compactc 0.31.1 → language 0.23.0, runtime 0.16.0, which is what
+#    @midnight-ntwrk/compact-runtime 0.16.0 in package.json requires).
+#    A newer compiler emits code for a newer runtime and fails with
+#    "Version mismatch: compiled code expects <x>, runtime is 0.16.0".
+compact update 0.31.1
 
-# Verify installation
+# 3. Verify
 compact --version
 ```
+
+### Run the proof server
+
+```bash
+# Preferred: the compose service, which pins the image tag
+npm run proof-server:start
+
+# or run it directly
+docker pull midnightntwrk/proof-server:8.1.0
+docker run -d -p 6300:6300 --name proof-server midnightntwrk/proof-server:8.1.0
+
+# Verify
+curl http://127.0.0.1:6300   # → {"status":"ok",...}
+```
+
+> The proof server downloads SRS parameters (~tens of MB) from
+> `srs.midnight.network` on first start, so it needs working DNS and egress.
 
 ## Setup
 
@@ -114,7 +140,9 @@ the contract is compiled:
 | Contract source assertions (`contracts/ballot.compact`) | 8 | ✅ Passing (no toolchain needed) |
 | Ledger semantics — reference model | 7 | ✅ Passing (no toolchain needed) |
 | Privacy model | 4 | ✅ Passing (no toolchain needed) |
-| Compiled circuits (Compact runtime simulator) | 12 | ⏭ Skipped until `npm run compile` |
+| Compiled circuits (Compact runtime simulator) | 12 | ✅ Passing (after `npm run compile`) |
+
+**31 tests, 0 skipped** on a compiled checkout.
 
 **Offline layer — no compiler, Docker or proof server required.** It asserts that
 the contract source really declares the public ledger state, the private witness,
@@ -180,16 +208,86 @@ This project is a proof-of-concept for confidential on-chain governance. The sam
 
 ## Screenshots
 
-> **Manual step:** add the screenshots below before submitting.
+> **Manual step:** add image screenshots of these terminal runs before submitting.
+> The captured text is below.
 
 ### Compilation Output
 
-_[TODO: paste a screenshot of `npm run compile` showing the generated
-`contracts/managed/ballot/` output with its circuits and keys.]_
+```console
+$ compact --version
+compact 0.5.2
+
+$ npm run compile
+> midnight-ballot@1.0.0 compile
+> compact compile contracts/ballot.compact contracts/managed/ballot
+
+Compiling 4 circuits:
+
+$ cat contracts/managed/ballot/compiler/contract-info.json | head -4
+{
+  "compiler-version": "0.31.1",
+  "language-version": "0.23.0",
+  "runtime-version": "0.16.0",
+
+$ ls contracts/managed/ballot
+compiler  contract  keys  zkir
+
+$ ls contracts/managed/ballot/keys
+castVote.prover        castVote.verifier
+closeElection.prover   closeElection.verifier
+isElectionOpen.prover  isElectionOpen.verifier
+openElection.prover    openElection.verifier
+```
 
 ### Test Results
 
-_[TODO: paste a screenshot of `npm test`.]_
+```console
+$ npm test
+> npx tsx --test tests/ballot.test.ts
+
+▶ Midnight Ballot — contract source
+  ✔ declares public ledger state for the election and the tallies
+  ✔ declares a private witness as a circuit input
+  ✔ never stores the witness value in ledger state
+  ✔ discloses deliberately: the nullifier and the tally branch only
+  ✔ guards castVote on election state and on a fresh nullifier
+  ✔ updates the total plus exactly one candidate tally
+  ✔ documents what is public and what is private in the header comment
+  ✔ uses the domain-separation tags the reference model reproduces
+✔ Midnight Ballot — contract source
+▶ Midnight Ballot — ledger semantics (reference model)
+  ✔ initialises with a zeroed, open election
+  ✔ counts a vote for candidate A in the total and in A only
+  ✔ counts a vote for candidate B
+  ✔ counts different voters separately and keeps both nullifiers
+  ✔ rejects a second vote from the same voter
+  ✔ rejects votes while the election is closed, and accepts them again after reopening
+  ✔ keeps no trace of voter secrets anywhere in the ledger
+✔ Midnight Ballot — ledger semantics (reference model)
+▶ Midnight Ballot — privacy model
+  ✔ derives a deterministic 32-byte commitment from a voter secret
+  ✔ gives every voter a distinct commitment
+  ✔ derives a deterministic nullifier that domain separation keeps distinct from the commitment
+  ✔ leaves the nullifier one-way: it never equals or contains the secret
+✔ Midnight Ballot — privacy model
+▶ Midnight Ballot — compiled circuits
+  ▶ pure circuits (4 passed)
+  ▶ state transitions (8 passed)
+    ✔ initialises an open election with empty tallies
+    ✔ reports the election as open right after initialisation
+    ✔ closes and reopens the election
+    ✔ casts a vote for candidate A and increments exactly one tally
+    ✔ casts a vote for candidate B and increments exactly one tally
+    ✔ rejects a second vote from the same voter
+    ✔ rejects a vote while the election is closed
+    ✔ lets different voters each cast one vote
+✔ Midnight Ballot — compiled circuits
+
+ℹ tests 31
+ℹ pass 31
+ℹ fail 0
+ℹ skipped 0
+```
 
 ### Deployed Contract Address
 

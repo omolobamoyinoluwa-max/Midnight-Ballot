@@ -22,10 +22,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Compact compiler
+      - name: Install Compact launcher
         run: |
           curl --proto '=https' --tlsv1.2 -LsSf https://github.com/midnightntwrk/compact/releases/latest/download/compact-installer.sh | sh
           echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      # Pin the compiler, never "latest": compactc 0.31.1 emits language 0.23.0 /
+      # runtime 0.16.0, matching @midnight-ntwrk/compact-runtime 0.16.0 here.
+      # A newer compiler emits code for a newer runtime and fails every test
+      # with "Version mismatch: compiled code expects <x>, runtime is 0.16.0".
+      - name: Pin Compact compiler
+        run: compact update 0.31.1
 
       - name: Verify Compact compiler
         run: compact --version

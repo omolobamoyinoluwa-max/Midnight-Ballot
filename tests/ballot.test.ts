@@ -216,7 +216,12 @@ describe('Midnight Ballot — contract source', () => {
   it('documents what is public and what is private in the header comment', () => {
     const header = contractSource.slice(0, contractSource.indexOf('struct VoterSecret'));
     assert.match(header, /PUBLIC \(on-chain/, 'header must list the public surface');
-    assert.match(header, /PRIVATE \(witness, never stored on-chain\)/, 'header must list the private surface');
+    assert.match(header, /PRIVATE \(witness, never stored on-chain/, 'header must list the private surface');
+    assert.match(
+      header,
+      /DISCLOSED BY DESIGN/,
+      'header must distinguish what is private from what disclose() reveals on purpose',
+    );
   });
 
   it('uses the domain-separation tags the reference model reproduces', () => {
@@ -382,7 +387,7 @@ describe(
     };
 
     /** Decode the public ledger out of a circuit context. */
-    const ledgerOf = (context: any) => compiled.ledger(context.callContext.currentQueryContext.state);
+    const ledgerOf = (context: any) => compiled.ledger(context.currentQueryContext.state);
 
     describe('pure circuits', () => {
       it('deriveVoterCommitment is deterministic and 32 bytes', () => {
