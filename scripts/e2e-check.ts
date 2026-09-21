@@ -60,8 +60,8 @@ async function main() {
   };
 
   const compiledContract = CompiledContract.make('ballot', Ballot.Contract).pipe(
-    (cc) => CompiledContract.withWitnesses(cc as any, deployWitnesses as any),
-    (cc) => CompiledContract.withCompiledFileAssets(cc as any, zkConfigPath),
+    (cc: any) => (CompiledContract.withWitnesses as any)(cc, deployWitnesses),
+    (cc: any) => (CompiledContract.withCompiledFileAssets as any)(cc, zkConfigPath),
   );
 
   const walletCtx = await createWallet({ network, networkConfig, seed: SEED });

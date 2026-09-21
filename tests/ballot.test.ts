@@ -1,307 +1,496 @@
 /**
- * Midnight Ballot — Contract Tests
+ * Midnight Ballot — Test Suite
  *
- * Tests cover:
- *   1. Pure circuit logic (commitment & nullifier derivation)
- *   2. Contract initialization & state setup
- *   3. State transitions (open/close election) — requires full runtime
- *   4. Vote casting & nullifier-based double-vote prevention — requires full runtime
- *   5. Privacy: private witness values are never exposed in ledger state
+ * The suite has two layers, so `npm test` is meaningful on a fresh clone AND
+ * exhaustive once the contract is compiled:
  *
- * NOTE: Impure circuit tests (Circuit Logic, Vote Casting) require a running
- * Midnight devnet + proof server. Run `npm run test:e2e` for full integration
- * tests against a deployed contract.
+ *   1. Offline layer (always runs — no toolchain, no docker, no proof server):
+ *      • Contract source assertions — `contracts/ballot.compact` really declares
+ *        the public ledger state, the private witness, the deliberate `disclose()`
+ *        calls and the public/private comment block the design depends on.
+ *      • Ledger semantics — a reference model of the ledger effects of
+ *        `castVote` / `closeElection` / `openElection`, driven by the same
+ *        `persistentHash` builtin the contract uses. The model is pinned to the
+ *        contract source by the assertions above.
+ *
+ *   2. Compiled layer (auto-skips until `npm run compile` has produced
+ *      `contracts/managed/ballot/contract/index.js`): executes the *real*
+ *      generated circuits in the Compact runtime simulator, in-process —
+ *      midnight contract tests do not need a network or a proof server.
+ *
+ * Run everything:
+ *   npm run compile && npm test
  */
 
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-// ─── Runtime imports ────────────────────────────────────────
 import {
-  createConstructorContext,
+  CompactTypeBytes,
+  CompactTypeVector,
   createCircuitContext,
-  emptyZswapLocalState,
-} from '@midnight-ntwrk/compact-runtime';
-import {
+  createConstructorContext,
   dummyContractAddress,
-} from '@midnight-ntwrk/onchain-runtime-v3';
+  emptyZswapLocalState,
+  persistentHash,
+} from '@midnight-ntwrk/compact-runtime';
 
-// ─── Compiled contract imports ──────────────────────────────
-import {
-  Contract,
-  pureCircuits,
-  type Ledger,
-} from '../contracts/managed/ballot/contract/index.js';
+// ─── Paths ──────────────────────────────────────────────────
 
-// ═════════════════════════════════════════════════════════════
-// Helpers
-// ═════════════════════════════════════════════════════════════
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const CONTRACT_SOURCE_PATH = path.resolve(HERE, '..', 'contracts', 'ballot.compact');
+const MANAGED_DIR = path.resolve(HERE, '..', 'contracts', 'managed', 'ballot');
+const COMPILED_CONTRACT_PATH = path.join(MANAGED_DIR, 'contract', 'index.js');
 
-/** Valid 32-byte hex-encoded CoinPublicKey for testing */
-const TEST_COIN_PUBLIC_KEY = '0000000000000000000000000000000000000000000000000000000000000001';
+const contractSource = fs.readFileSync(CONTRACT_SOURCE_PATH, 'utf8');
 
-/** Create a deterministic 32-byte voter secret for testing */
-function voterSecret(index: number): { bytes: Uint8Array } {
+/** A valid 32-byte CoinPublicKey, used by both the compiled tests and the runtime. */
+const COIN_PUBLIC_KEY = '01'.repeat(32);
+
+// ─── Reference derivation (mirrors the contract's persistentHash calls) ──────
+
+/**
+ * Domain separation tags, byte-for-byte identical to the tags passed to
+ * `pad(32, …)` in `contracts/ballot.compact`. The source assertions in
+ * "Contract source" fail if either tag drifts from the contract.
+ */
+const VOTER_TAG = 'midnight-ballot:voter:v1';
+const NULLIFIER_TAG = 'midnight-ballot:nullifier:v1';
+
+const BYTES_32 = new CompactTypeBytes(32);
+const BYTE_PAIR = new CompactTypeVector(2, BYTES_32);
+
+/**
+ * Encode a domain-separation tag the way `pad(32, tag)` does in Compact:
+ * ASCII bytes, zero-padded on the right to 32 bytes.
+ */
+function paddedTag(tag: string): Uint8Array {
+  const encoded = new TextEncoder().encode(tag);
+  if (encoded.length > 32) throw new Error(`tag too long: ${tag}`);
   const bytes = new Uint8Array(32);
-  for (let i = 0; i < 32; i++) {
-    bytes[i] = (index * 31 + i * 7) % 256;
-  }
-  return { bytes };
+  bytes.set(encoded);
+  return bytes;
 }
 
-/** Create a MockWitnesses provider that returns the given secret */
-function mockWitnesses(secret: { bytes: Uint8Array }) {
+/** Deterministic 32-byte secret standing in for a voter's private credential. */
+function voterSecret(index: number): Uint8Array {
+  const bytes = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) bytes[i] = (index * 31 + i * 7) % 256;
+  return bytes;
+}
+
+/** `deriveVoterCommitment` from the contract, run through the real hash builtin. */
+function deriveVoterCommitment(secret: Uint8Array): Uint8Array {
+  return persistentHash(BYTE_PAIR, [paddedTag(VOTER_TAG), secret]);
+}
+
+/** `deriveNullifier` from the contract, run through the real hash builtin. */
+function deriveNullifier(secret: Uint8Array): Uint8Array {
+  return persistentHash(BYTE_PAIR, [paddedTag(NULLIFIER_TAG), secret]);
+}
+
+const toHex = (bytes: Uint8Array): string => Buffer.from(bytes).toString('hex');
+
+// ─── Reference ledger model ────────────────────────────────
+
+/**
+ * Public ledger state, mirroring `contracts/ballot.compact`.
+ * Deliberately contains no field holding a voter secret — see the
+ * "private inputs" tests.
+ */
+type LedgerState = {
+  readonly electionId: string;
+  readonly electionOpen: boolean;
+  readonly totalVotes: number;
+  readonly candidateAVotes: number;
+  readonly candidateBVotes: number;
+  /** Spent nullifiers — the on-chain double-vote guard. Hashes only, never secrets. */
+  readonly nullifierSpent: ReadonlySet<string>;
+};
+
+/** Ledger state produced by the contract constructor. */
+function newElection(electionId: string): LedgerState {
   return {
-    getVoterSecret(_context: any): [any, { bytes: Uint8Array }] {
-      return [{}, secret];
-    },
+    electionId,
+    electionOpen: true,
+    totalVotes: 0,
+    candidateAVotes: 0,
+    candidateBVotes: 0,
+    nullifierSpent: new Set<string>(),
   };
 }
 
-/** Create a new contract instance with initial state */
-function createContract(electionName: string = 'Test Election 2026') {
-  const witnesses = mockWitnesses(voterSecret(0));
-  const contract = new Contract(witnesses);
-  const ctorCtx = createConstructorContext({}, TEST_COIN_PUBLIC_KEY);
-  const initResult = contract.initialState(ctorCtx, electionName);
-  return { contract, initResult, witnesses };
+/** `castVote(choice)` — asserts on a closed election and on a spent nullifier. */
+function castVote(state: LedgerState, secret: Uint8Array, choice: 0 | 1): LedgerState {
+  if (!state.electionOpen) throw new Error('Election is not open');
+
+  // The contract discloses the nullifier on purpose: it is a one-way hash, and
+  // publishing it is what makes replay detectable without revealing the voter.
+  const nullifier = toHex(deriveNullifier(secret));
+  if (state.nullifierSpent.has(nullifier)) throw new Error('Voter has already cast a ballot');
+
+  return {
+    ...state,
+    totalVotes: state.totalVotes + 1,
+    candidateAVotes: state.candidateAVotes + (choice === 0 ? 1 : 0),
+    candidateBVotes: state.candidateBVotes + (choice === 1 ? 1 : 0),
+    nullifierSpent: new Set(state.nullifierSpent).add(nullifier),
+  };
 }
 
-/**
- * Create a circuit context from a contract's initial state.
- *
- * NOTE: This requires a running Midnight devnet with proof server.
- * For unit tests, use pure circuits; for stateful tests use `npm run test:e2e`.
- */
-function makeCircuitContext(initResult: ReturnType<typeof createContract>['initResult']) {
-  return createCircuitContext(
-    dummyContractAddress,
-    emptyZswapLocalState(),
-    initResult.currentContractState,
-    initResult.currentPrivateState,
-  );
-}
+/** `closeElection()` */
+const closeElection = (state: LedgerState): LedgerState => ({ ...state, electionOpen: false });
+
+/** `openElection()` */
+const openElection = (state: LedgerState): LedgerState => ({ ...state, electionOpen: true });
 
 // ═════════════════════════════════════════════════════════════
-// Test Suite
+// Layer 1 — offline
 // ═════════════════════════════════════════════════════════════
 
-describe('Midnight Ballot Contract', () => {
-
-  // ─── Pure Circuit Tests ──────────────────────────────────
-
-  describe('Pure Circuits', () => {
-
-    it('deriveVoterCommitment: produces deterministic output', () => {
-      const secret = voterSecret(42);
-      const c1 = pureCircuits.deriveVoterCommitment(secret);
-      const c2 = pureCircuits.deriveVoterCommitment(secret);
-      assert.deepStrictEqual(c1, c2, 'Same input must produce same commitment');
-      assert.strictEqual(c1.bytes.length, 32, 'Commitment must be 32 bytes');
-    });
-
-    it('deriveVoterCommitment: different secrets produce different commitments', () => {
-      const s1 = voterSecret(1);
-      const s2 = voterSecret(2);
-      const c1 = pureCircuits.deriveVoterCommitment(s1);
-      const c2 = pureCircuits.deriveVoterCommitment(s2);
-      assert.notDeepStrictEqual(c1, c2, 'Different secrets must have different commitments');
-    });
-
-    it('deriveNullifier: produces deterministic output', () => {
-      const secret = voterSecret(99);
-      const n1 = pureCircuits.deriveNullifier(secret);
-      const n2 = pureCircuits.deriveNullifier(secret);
-      assert.deepStrictEqual(n1, n2, 'Same input must produce same nullifier');
-      assert.strictEqual(n1.bytes.length, 32, 'Nullifier must be 32 bytes');
-    });
-
-    it('deriveNullifier: differs from voter commitment (domain separation)', () => {
-      const secret = voterSecret(7);
-      const commitment = pureCircuits.deriveVoterCommitment(secret);
-      const nullifier = pureCircuits.deriveNullifier(secret);
-      assert.notDeepStrictEqual(
-        commitment.bytes,
-        nullifier.bytes,
-        'Commitment and nullifier must differ due to domain separation tags',
+describe('Midnight Ballot — contract source', () => {
+  it('declares public ledger state for the election and the tallies', () => {
+    for (const field of [
+      'electionId',
+      'electionOpen',
+      'totalVotes',
+      'candidateAVotes',
+      'candidateBVotes',
+      'nullifierSpent',
+    ]) {
+      assert.match(
+        contractSource,
+        new RegExp(`export ledger ${field}\\b`),
+        `${field} must be exported ledger (public) state`,
       );
-    });
-
-    it('deriveNullifier: different voters have different nullifiers', () => {
-      const n1 = pureCircuits.deriveNullifier(voterSecret(10));
-      const n2 = pureCircuits.deriveNullifier(voterSecret(20));
-      assert.notDeepStrictEqual(n1, n2, 'Different voters must have unique nullifiers');
-    });
+    }
   });
 
-  // ─── Contract Initialization Tests ───────────────────────
-
-  describe('Contract Initialization', () => {
-
-    it('initialState: sets electionId from constructor parameter', () => {
-      const { initResult } = createContract('Presidential Election 2026');
-      assert.ok(initResult.currentContractState, 'Contract state should be defined after initialization');
-    });
-
-    it('initialState: election starts in open state', () => {
-      const { initResult } = createContract('Test Election');
-      assert.ok(initResult.currentContractState, 'Constructor should produce contract state');
-      assert.ok(initResult.currentPrivateState !== undefined, 'Constructor should produce private state');
-    });
-
-    it('initialState: supports multiple election names', () => {
-      const election1 = createContract('Election Alpha');
-      const election2 = createContract('Election Beta');
-      assert.ok(election1.initResult.currentContractState);
-      assert.ok(election2.initResult.currentContractState);
-      // Different names should produce different contract states
-      assert.notDeepStrictEqual(
-        election1.initResult.currentContractState,
-        election2.initResult.currentContractState,
-        'Different election names should produce distinct contract states',
-      );
-    });
+  it('declares a private witness as a circuit input', () => {
+    assert.match(contractSource, /^witness getVoterSecret\(\): VoterSecret;/m);
   });
 
-  // ─── Circuit Logic Tests (requires devnet + proof server) ─
-
-  describe('Circuit Logic', () => {
-
-    it('isElectionOpen: returns true after initialization', { skip: true }, () => {
-      const { contract, initResult } = createContract();
-      const ctx = makeCircuitContext(initResult);
-      const result = contract.impureCircuits.isElectionOpen(ctx);
-      assert.strictEqual(result.result, true, 'Election should be open after initialization');
-    });
-
-    it('closeElection: changes election status to closed', { skip: true }, () => {
-      const { contract, initResult } = createContract();
-      const ctx = makeCircuitContext(initResult);
-      const closeResult = contract.impureCircuits.closeElection(ctx);
-      const checkResult = contract.impureCircuits.isElectionOpen(closeResult.context);
-      assert.strictEqual(checkResult.result, false, 'Election should be closed after closeElection');
-    });
-
-    it('openElection: re-opens a closed election', { skip: true }, () => {
-      const { contract, initResult } = createContract();
-      const ctx = makeCircuitContext(initResult);
-      const closed = contract.impureCircuits.closeElection(ctx);
-      const reopened = contract.impureCircuits.openElection(closed.context);
-      const check = contract.impureCircuits.isElectionOpen(reopened.context);
-      assert.strictEqual(check.result, true, 'Election should be open after re-opening');
-    });
-
-    it('castVote: successfully casts a vote for candidate A (choice 0)', { skip: true }, () => {
-      const { contract, initResult } = createContract();
-      const ctx = makeCircuitContext(initResult);
-      const result = contract.impureCircuits.castVote(ctx, 0n);
-      assert.ok(result, 'Vote should be cast successfully');
-      assert.ok(result.context, 'Circuit should return updated context');
-    });
-
-    it('castVote: successfully casts a vote for candidate B (choice 1)', { skip: true }, () => {
-      const { contract, initResult } = createContract();
-      const ctx = makeCircuitContext(initResult);
-      const result = contract.impureCircuits.castVote(ctx, 1n);
-      assert.ok(result, 'Vote for candidate B should succeed');
-    });
-
-    it('castVote: prevents double-voting (nullifier already spent)', { skip: true }, () => {
-      const secret = voterSecret(100);
-      const contract = new Contract(mockWitnesses(secret));
-      const ctorCtx = createConstructorContext({}, TEST_COIN_PUBLIC_KEY);
-      const initResult = contract.initialState(ctorCtx, 'Test');
-      let ctx = makeCircuitContext(initResult);
-
-      const firstVote = contract.impureCircuits.castVote(ctx, 0n);
-      ctx = firstVote.context;
-
-      assert.throws(
-        () => contract.impureCircuits.castVote(ctx, 1n),
-        /already cast|assert|Voter/i,
-        'Same voter should not be able to vote twice',
+  it('never stores the witness value in ledger state', () => {
+    const ledgerDeclarations = contractSource.match(/^export ledger .*$/gm) ?? [];
+    assert.ok(ledgerDeclarations.length > 0, 'contract must declare public ledger state');
+    for (const declaration of ledgerDeclarations) {
+      assert.doesNotMatch(
+        declaration,
+        /getVoterSecret|voterSecret|VoterSecret/,
+        'the voter secret must never be a ledger (public) field',
       );
-    });
-
-    it('castVote: rejects voting when election is closed', { skip: true }, () => {
-      const { contract, initResult } = createContract();
-      let ctx = makeCircuitContext(initResult);
-
-      const closed = contract.impureCircuits.closeElection(ctx);
-      ctx = closed.context;
-
-      assert.throws(
-        () => contract.impureCircuits.castVote(ctx, 0n),
-        /not open|Election is not open/i,
-        'Voting when closed should be rejected',
-      );
-    });
-
-    it('castVote: different voters can each vote once', { skip: true }, () => {
-      const contract = new Contract(mockWitnesses(voterSecret(200)));
-      const ctorCtx = createConstructorContext({}, TEST_COIN_PUBLIC_KEY);
-      const initResult = contract.initialState(ctorCtx, 'Election');
-      const ctx = makeCircuitContext(initResult);
-
-      const vote1 = contract.impureCircuits.castVote(ctx, 0n);
-      assert.ok(vote1, 'First voter should succeed');
-
-      assert.throws(
-        () => contract.impureCircuits.castVote(vote1.context, 1n),
-        /already cast|assert|Voter/i,
-        'Same voter should not vote twice',
-      );
-    });
+    }
   });
 
-  // ─── Privacy Tests ───────────────────────────────────────
+  it('discloses deliberately: the nullifier and the tally branch only', () => {
+    const disclosures = contractSource.match(/disclose\(/g) ?? [];
+    assert.ok(
+      disclosures.length >= 3,
+      `expected deliberate disclose() calls, found ${disclosures.length}`,
+    );
+    // The secret itself is hashed, never disclosed.
+    assert.doesNotMatch(contractSource, /disclose\(\s*getVoterSecret\(\)/, 'the witness must never be disclosed');
+    assert.match(contractSource, /disclose\(nullifier\)/, 'the nullifier is disclosed on purpose');
+    assert.match(contractSource, /disclose\(candidateChoice\)/, 'the vote branch is disclosed on purpose');
+  });
 
-  describe('Privacy Model', () => {
+  it('guards castVote on election state and on a fresh nullifier', () => {
+    assert.match(contractSource, /assert\(electionOpen == true/, 'castVote must require an open election');
+    assert.match(
+      contractSource,
+      /!nullifierSpent\.member\(disclose\(nullifier\)\)/,
+      'castVote must reject an already-spent nullifier',
+    );
+    assert.match(contractSource, /nullifierSpent\.insert\(disclose\(nullifier\)/, 'castVote must spend the nullifier');
+  });
 
-    it('voter secret is never directly stored in contract state', () => {
-      const secret = voterSecret(999);
-      const { initResult } = createContract();
+  it('updates the total plus exactly one candidate tally', () => {
+    assert.match(contractSource, /totalVotes\.increment\(1\)/);
+    assert.match(contractSource, /candidateAVotes\.increment\(1\)/);
+    assert.match(contractSource, /candidateBVotes\.increment\(1\)/);
+  });
 
-      const stateStr = JSON.stringify(initResult.currentContractState);
-      const secretHex = Buffer.from(secret.bytes).toString('hex');
-      assert.ok(
-        !stateStr.includes(secretHex),
-        'Raw voter secret bytes must NOT appear in contract state',
-      );
-    });
+  it('documents what is public and what is private in the header comment', () => {
+    const header = contractSource.slice(0, contractSource.indexOf('struct VoterSecret'));
+    assert.match(header, /PUBLIC \(on-chain/, 'header must list the public surface');
+    assert.match(header, /PRIVATE \(witness, never stored on-chain\)/, 'header must list the private surface');
+  });
 
-    it('nullifier is derived via one-way hash — secret cannot be recovered', () => {
-      const secret = voterSecret(42);
-      const nullifier = pureCircuits.deriveNullifier(secret);
-
-      assert.notDeepStrictEqual(
-        nullifier.bytes,
-        secret.bytes,
-        'Nullifier (hash) must differ from raw secret',
-      );
-      assert.strictEqual(nullifier.bytes.length, 32, 'Nullifier must be 32 bytes');
-    });
-
-    it('domain separation prevents commitment/nullifier cross-use', () => {
-      const secret = voterSecret(1);
-      const commitment = pureCircuits.deriveVoterCommitment(secret);
-      const nullifier = pureCircuits.deriveNullifier(secret);
-
-      assert.notDeepStrictEqual(
-        commitment.bytes,
-        nullifier.bytes,
-        'Domain-separated hashes must produce different outputs',
-      );
-    });
-
-    it('pureCircuits are truly pure — no side effects', () => {
-      const secret = voterSecret(55);
-      // Multiple calls with same input always produce identical output
-      const results = Array.from({ length: 10 }, () => pureCircuits.deriveNullifier(secret));
-      const first = results[0];
-      for (const r of results) {
-        assert.deepStrictEqual(r, first, 'Pure circuits must be deterministic');
-      }
-    });
+  it('uses the domain-separation tags the reference model reproduces', () => {
+    assert.match(contractSource, new RegExp(`pad\\(32, "${VOTER_TAG}"\\)`));
+    assert.match(contractSource, new RegExp(`pad\\(32, "${NULLIFIER_TAG}"\\)`));
+    assert.match(contractSource, /persistentHash<Vector<2, Bytes<32>>>/);
   });
 });
+
+describe('Midnight Ballot — ledger semantics (reference model)', () => {
+  it('initialises with a zeroed, open election', () => {
+    const ledger = newElection('Test Election 2026');
+    assert.equal(ledger.electionId, 'Test Election 2026');
+    assert.equal(ledger.electionOpen, true);
+    assert.equal(ledger.totalVotes, 0);
+    assert.equal(ledger.candidateAVotes, 0);
+    assert.equal(ledger.candidateBVotes, 0);
+    assert.equal(ledger.nullifierSpent.size, 0);
+  });
+
+  it('counts a vote for candidate A in the total and in A only', () => {
+    const before = newElection('Test');
+    const after = castVote(before, voterSecret(1), 0);
+
+    assert.equal(after.totalVotes, 1);
+    assert.equal(after.candidateAVotes, 1);
+    assert.equal(after.candidateBVotes, 0, 'candidate B must not move');
+    assert.equal(before.totalVotes, 0, 'the previous state is untouched');
+
+    // Exactly one new nullifier was spent; it is a hash, not the secret.
+    assert.equal(after.nullifierSpent.size, 1);
+    const spent = [...after.nullifierSpent][0];
+    assert.equal(spent.length, 64, 'nullifier must be a 32-byte hash');
+    assert.notEqual(spent, toHex(voterSecret(1)), 'the ledger must never hold raw secret bytes');
+  });
+
+  it('counts a vote for candidate B', () => {
+    const after = castVote(newElection('Test'), voterSecret(2), 1);
+    assert.equal(after.totalVotes, 1);
+    assert.equal(after.candidateBVotes, 1);
+    assert.equal(after.candidateAVotes, 0);
+  });
+
+  it('counts different voters separately and keeps both nullifiers', () => {
+    const first = castVote(newElection('Test'), voterSecret(10), 0);
+    const second = castVote(first, voterSecret(20), 1);
+
+    assert.equal(second.totalVotes, 2);
+    assert.equal(second.candidateAVotes, 1);
+    assert.equal(second.candidateBVotes, 1);
+    assert.equal(second.nullifierSpent.size, 2);
+  });
+
+  it('rejects a second vote from the same voter', () => {
+    const voter = voterSecret(42);
+    const voted = castVote(newElection('Test'), voter, 0);
+
+    assert.throws(
+      () => castVote(voted, voter, 1),
+      /already cast a ballot/,
+      'the same secret must not vote twice',
+    );
+    // The rejected call left the tallies alone.
+    assert.equal(voted.totalVotes, 1);
+  });
+
+  it('rejects votes while the election is closed, and accepts them again after reopening', () => {
+    const closed = closeElection(newElection('Test'));
+
+    assert.equal(closed.electionOpen, false);
+    assert.throws(() => castVote(closed, voterSecret(3), 0), /not open/);
+
+    const reopened = openElection(closed);
+    assert.equal(reopened.electionOpen, true);
+    assert.equal(castVote(reopened, voterSecret(3), 0).totalVotes, 1);
+  });
+
+  it('keeps no trace of voter secrets anywhere in the ledger', () => {
+    const voter = voterSecret(999);
+    const ledger = castVote(newElection('Test'), voter, 1);
+    const serialised = JSON.stringify({ ...ledger, nullifierSpent: [...ledger.nullifierSpent] });
+
+    assert.ok(!serialised.includes(toHex(voter)), 'raw secret bytes must not appear in ledger state');
+    // Only the nullifier may reference the voter, and it cannot be reversed.
+    assert.notEqual(toHex(deriveNullifier(voter)), toHex(voter));
+  });
+});
+
+describe('Midnight Ballot — privacy model', () => {
+  it('derives a deterministic 32-byte commitment from a voter secret', () => {
+    const secret = voterSecret(7);
+    const commitment = deriveVoterCommitment(secret);
+
+    assert.equal(commitment.length, 32);
+    assert.equal(toHex(commitment), toHex(deriveVoterCommitment(secret)));
+  });
+
+  it('gives every voter a distinct commitment', () => {
+    assert.notEqual(
+      toHex(deriveVoterCommitment(voterSecret(1))),
+      toHex(deriveVoterCommitment(voterSecret(2))),
+    );
+  });
+
+  it('derives a deterministic nullifier that domain separation keeps distinct from the commitment', () => {
+    const secret = voterSecret(99);
+    const nullifier = deriveNullifier(secret);
+
+    assert.equal(nullifier.length, 32);
+    assert.equal(toHex(nullifier), toHex(deriveNullifier(secret)), 'the same vote is always the same nullifier');
+    assert.notEqual(
+      toHex(deriveVoterCommitment(secret)),
+      toHex(nullifier),
+      'the v1 tags must keep `midnight-ballot:voter` and `midnight-ballot:nullifier` apart',
+    );
+  });
+
+  it('leaves the nullifier one-way: it never equals or contains the secret', () => {
+    for (const index of [0, 5, 123, 4242]) {
+      const secret = voterSecret(index);
+      const nullifier = deriveNullifier(secret);
+
+      assert.notEqual(toHex(nullifier), toHex(secret));
+      assert.ok(!toHex(nullifier).includes(toHex(secret)), 'nullifier must not embed the secret');
+      assert.ok(!toHex(secret).includes(toHex(nullifier)), 'secret must not embed the nullifier');
+    }
+  });
+});
+
+// ═════════════════════════════════════════════════════════════
+// Layer 2 — the real generated circuits (skipped until compiled)
+// ═════════════════════════════════════════════════════════════
+
+const compiledAvailable = fs.existsSync(COMPILED_CONTRACT_PATH);
+const compiled: any = compiledAvailable
+  ? await import(pathToFileURL(COMPILED_CONTRACT_PATH).href)
+  : undefined;
+
+describe(
+  'Midnight Ballot — compiled circuits',
+  { skip: compiledAvailable ? false : 'run `npm run compile` to generate contracts/managed/ballot' },
+  () => {
+    /** Witnesses the generated contract needs; each scenario gets its own secret. */
+    const witnessesFor = (secret: Uint8Array) => ({
+      getVoterSecret: (_context: unknown) => [{}, { bytes: secret }],
+    });
+
+    /**
+     * Initialise the contract and hand back a circuit context factory.
+     * `initialState` runs the constructor; each caller then threads
+     * `result.context` forward to simulate the next circuit call.
+     */
+    const simulate = (electionName: string, secret: Uint8Array) => {
+      const contract = new compiled.Contract(witnessesFor(secret));
+      const init = contract.initialState(createConstructorContext({}, COIN_PUBLIC_KEY), electionName);
+      const context = createCircuitContext(
+        dummyContractAddress(),
+        emptyZswapLocalState(COIN_PUBLIC_KEY),
+        init.currentContractState,
+        init.currentPrivateState,
+      );
+      return { contract, context };
+    };
+
+    /** Decode the public ledger out of a circuit context. */
+    const ledgerOf = (context: any) => compiled.ledger(context.callContext.currentQueryContext.state);
+
+    describe('pure circuits', () => {
+      it('deriveVoterCommitment is deterministic and 32 bytes', () => {
+        const secret = { bytes: voterSecret(42) };
+        const first = compiled.pureCircuits.deriveVoterCommitment(secret);
+        const second = compiled.pureCircuits.deriveVoterCommitment(secret);
+
+        assert.deepStrictEqual(first, second);
+        assert.equal(first.bytes.length, 32);
+      });
+
+      it('different secrets produce different commitments', () => {
+        assert.notDeepStrictEqual(
+          compiled.pureCircuits.deriveVoterCommitment({ bytes: voterSecret(1) }),
+          compiled.pureCircuits.deriveVoterCommitment({ bytes: voterSecret(2) }),
+        );
+      });
+
+      it('deriveNullifier is deterministic and domain-separated from the commitment', () => {
+        const secret = { bytes: voterSecret(7) };
+        const commitment = compiled.pureCircuits.deriveVoterCommitment(secret);
+        const nullifier = compiled.pureCircuits.deriveNullifier(secret);
+
+        assert.deepStrictEqual(nullifier, compiled.pureCircuits.deriveNullifier(secret));
+        assert.equal(nullifier.bytes.length, 32);
+        assert.notDeepStrictEqual(commitment.bytes, nullifier.bytes);
+      });
+
+      it('different voters have different nullifiers', () => {
+        assert.notDeepStrictEqual(
+          compiled.pureCircuits.deriveNullifier({ bytes: voterSecret(10) }),
+          compiled.pureCircuits.deriveNullifier({ bytes: voterSecret(20) }),
+        );
+      });
+    });
+
+    describe('state transitions', () => {
+      it('initialises an open election with empty tallies', () => {
+        const { context } = simulate('Presidential Election 2026', voterSecret(0));
+        const ledger = ledgerOf(context);
+
+        assert.equal(ledger.electionOpen, true);
+        assert.equal(ledger.totalVotes, 0n);
+        assert.equal(ledger.candidateAVotes, 0n);
+        assert.equal(ledger.candidateBVotes, 0n);
+      });
+
+      it('reports the election as open right after initialisation', () => {
+        const { contract, context } = simulate('Test Election', voterSecret(1));
+        assert.equal(contract.impureCircuits.isElectionOpen(context).result, true);
+      });
+
+      it('closes and reopens the election', () => {
+        const { contract, context } = simulate('Test Election', voterSecret(1));
+
+        const closed = contract.impureCircuits.closeElection(context);
+        assert.equal(contract.impureCircuits.isElectionOpen(closed.context).result, false);
+
+        const reopened = contract.impureCircuits.openElection(closed.context);
+        assert.equal(contract.impureCircuits.isElectionOpen(reopened.context).result, true);
+      });
+
+      it('casts a vote for candidate A and increments exactly one tally', () => {
+        const { contract, context } = simulate('Test Election', voterSecret(11));
+        const voted = contract.impureCircuits.castVote(context, 0n);
+        const ledger = ledgerOf(voted.context);
+
+        assert.equal(ledger.totalVotes, 1n);
+        assert.equal(ledger.candidateAVotes, 1n);
+        assert.equal(ledger.candidateBVotes, 0n);
+      });
+
+      it('casts a vote for candidate B and increments exactly one tally', () => {
+        const { contract, context } = simulate('Test Election', voterSecret(12));
+        const voted = contract.impureCircuits.castVote(context, 1n);
+        const ledger = ledgerOf(voted.context);
+
+        assert.equal(ledger.totalVotes, 1n);
+        assert.equal(ledger.candidateBVotes, 1n);
+        assert.equal(ledger.candidateAVotes, 0n);
+      });
+
+      it('rejects a second vote from the same voter', () => {
+        const { contract, context } = simulate('Test Election', voterSecret(13));
+        const voted = contract.impureCircuits.castVote(context, 0n);
+
+        assert.throws(
+          () => contract.impureCircuits.castVote(voted.context, 1n),
+          /already cast a ballot/,
+        );
+      });
+
+      it('rejects a vote while the election is closed', () => {
+        const { contract, context } = simulate('Test Election', voterSecret(14));
+        const closed = contract.impureCircuits.closeElection(context);
+
+        assert.throws(() => contract.impureCircuits.castVote(closed.context, 0n), /not open/);
+      });
+
+      it('lets different voters each cast one vote', () => {
+        const first = simulate('Test Election', voterSecret(15));
+        const firstVote = first.contract.impureCircuits.castVote(first.context, 0n);
+        assert.equal(ledgerOf(firstVote.context).totalVotes, 1n);
+
+        const second = simulate('Test Election', voterSecret(16));
+        const secondVote = second.contract.impureCircuits.castVote(second.context, 1n);
+        assert.equal(ledgerOf(secondVote.context).candidateBVotes, 1n);
+      });
+    });
+  },
+);

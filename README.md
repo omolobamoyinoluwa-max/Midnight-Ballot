@@ -4,11 +4,14 @@
 
 ## Contract Address
 
-| Network    | Address                                                              |
-|------------|----------------------------------------------------------------------|
-| Undeployed | `55c9ca11219e8717efbd9a520dd6ec0011fa056d38638b19d1e8972d39de78ea`  |
-| Preview    | [DEPLOY AFTER FAUCET FUNDING]                                        |
-| Preprod    | [DEPLOY AFTER FAUCET FUNDING]                                        |
+| Network  | Address                        |
+|----------|--------------------------------|
+| Preview  | _Not deployed yet — see Setup_ |
+| Preprod  | _Not deployed yet — see Setup_ |
+
+> **Manual step:** run `npm run deploy -- --network preview`, fund the wallet it
+> prints, and paste the contract address it reports into the table above.
+> The address is also recorded in `.midnight-state.json` (git-ignored).
 
 ## What This Does
 
@@ -100,26 +103,38 @@ ls contracts/managed/ballot/contract/
 ## Run Tests
 
 ```bash
-# Run unit tests (12 tests covering circuit logic, state, and privacy)
 npm test
 ```
 
-The test suite verifies:
+The suite has two layers, so it is useful on a fresh clone *and* exhaustive once
+the contract is compiled:
 
-| Category | Tests | Status |
+| Layer | Tests | Status |
 |---|---|---|
-| **Pure Circuits** | 5 | ✅ Passing |
-| **Contract Initialization** | 3 | ✅ Passing |
-| **Privacy Model** | 4 | ✅ Passing |
-| **Circuit Logic** (requires devnet) | 3 | ⏭ Skipped |
-| **Vote Casting** (requires devnet) | 5 | ⏭ Skipped |
+| Contract source assertions (`contracts/ballot.compact`) | 8 | ✅ Passing (no toolchain needed) |
+| Ledger semantics — reference model | 7 | ✅ Passing (no toolchain needed) |
+| Privacy model | 4 | ✅ Passing (no toolchain needed) |
+| Compiled circuits (Compact runtime simulator) | 12 | ⏭ Skipped until `npm run compile` |
 
-Pure circuit tests verify that:
-- Commitment and nullifier derivation are deterministic
-- Different voter secrets produce different commitments and nullifiers
-- Domain separation tags prevent commitment/nullifier cross-use
-- Voter secrets are never stored in contract state
-- Nullifiers are one-way hashes that cannot be reversed
+**Offline layer — no compiler, Docker or proof server required.** It asserts that
+the contract source really declares the public ledger state, the private witness,
+the deliberate `disclose()` calls and the public/private header comment, and it
+exercises a reference model of the ledger (`castVote` / `closeElection` /
+`openElection`) built on the same `persistentHash` builtin. This layer verifies:
+
+- Commitment and nullifier derivation are deterministic and domain-separated
+- Voter secrets never appear in ledger state and the nullifier is one-way
+- Different voters are counted separately, one vote per nullifier
+- Votes are rejected on a closed election and after reopening they resume
+
+**Compiled layer — runs the real generated circuits.** Once `npm run compile` has
+produced `contracts/managed/ballot/`, the simulator tests execute the actual
+circuits in-process (no network, no proof server):
+
+```bash
+npm run compile
+npm test
+```
 
 ### End-to-end tests (requires deployed contract)
 
@@ -165,52 +180,21 @@ This project is a proof-of-concept for confidential on-chain governance. The sam
 
 ## Screenshots
 
+> **Manual step:** add the screenshots below before submitting.
+
 ### Compilation Output
 
-```
-> midnight-ballot@1.0.0 compile
-> compact compile contracts/ballot.compact contracts/managed/ballot
-
-Compiling 4 circuits:
-  ✓ openElection
-  ✓ closeElection
-  ✓ castVote
-  ✓ isElectionOpen
-```
+_[TODO: paste a screenshot of `npm run compile` showing the generated
+`contracts/managed/ballot/` output with its circuits and keys.]_
 
 ### Test Results
 
-```
-▶ Midnight Ballot Contract
-  ▶ Pure Circuits
-    ✔ deriveVoterCommitment: produces deterministic output
-    ✔ deriveVoterCommitment: different secrets produce different commitments
-    ✔ deriveNullifier: produces deterministic output
-    ✔ deriveNullifier: differs from voter commitment (domain separation)
-    ✔ deriveNullifier: different voters have different nullifiers
-  ✔ Pure Circuits (5 passed)
-  ▶ Contract Initialization
-    ✔ initialState: sets electionId from constructor parameter
-    ✔ initialState: election starts in open state
-    ✔ initialState: supports multiple election names
-  ✔ Contract Initialization (3 passed)
-  ▶ Privacy Model
-    ✔ voter secret is never directly stored in contract state
-    ✔ nullifier is derived via one-way hash
-    ✔ domain separation prevents commitment/nullifier cross-use
-    ✔ pureCircuits are truly pure — no side effects
-  ✔ Privacy Model (4 passed)
-
-  12 passed | 8 skipped | 0 failed
-```
+_[TODO: paste a screenshot of `npm test`.]_
 
 ### Deployed Contract Address
 
-```
-Undeployed (local devnet): 55c9ca11219e8717efbd9a520dd6ec0011fa056d38638b19d1e8972d39de78ea
-```
-
-*Preview/Preprod addresses will be added after faucet funding.*
+_[TODO: paste a screenshot of `npm run deploy -- --network preview` printing the
+contract address, and add that address to the Contract Address table above.]_
 
 ---
 
