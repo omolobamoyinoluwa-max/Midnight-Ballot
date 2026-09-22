@@ -28,12 +28,14 @@ jobs:
   deploy-preprod:
     runs-on: ubuntu-latest
     # A *fresh* Preprod wallet has to replay ~495k shielded/dust events before
-    # waitForSyncedState() returns — Midnight's own wallet tracker measures that
-    # at 40-60 minutes on a clean machine, versus ~55k events (~20s) on Preview.
-    # 45 minutes was not enough: the first run was cancelled mid-sync. There is
-    # no partial checkpoint to resume from (persistWalletState() only runs after
-    # a completed sync), so this budget has to cover the whole replay in one go.
-    timeout-minutes: 120
+    # waitForSyncedState() returns — versus ~55k events (~20s) on Preview.
+    # 45 minutes was not enough (first run cancelled mid-sync) and 120 was not
+    # enough either: run 35772405100 was still inside the sync step at ~104
+    # minutes. There is no partial checkpoint to resume from
+    # (persistWalletState() only runs after a completed sync), so one attempt
+    # has to cover the whole replay plus DUST wait, proof generation and the
+    # deploy transaction in a single unbroken budget.
+    timeout-minutes: 240
 
     steps:
       - uses: actions/checkout@v4
