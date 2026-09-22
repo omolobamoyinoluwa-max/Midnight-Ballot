@@ -9,9 +9,9 @@
 | Preview  | _Not deployed yet — see Setup_ |
 | Preprod  | _Not deployed yet — see Setup_ |
 
-> **Manual step:** run `npm run deploy -- --network preview`, fund the wallet it
-> prints, and paste the contract address it reports into the table above.
-> The address is also recorded in `.midnight-state.json` (git-ignored).
+> **To populate this table:** follow [Deploy](#deploy) below. The deploy prints a
+> wallet address to fund at the network's faucet, then prints the contract address.
+> Addresses are also recorded in `.midnight-state.json` (git-ignored).
 >
 > **⚠ Blocks submission:** the table above is a placeholder until a real address
 > is pasted in. Level 1 will not pass review with `_Not deployed yet_` here.
@@ -97,11 +97,18 @@ compact --version
 
 ### Run the proof server
 
+The proof server runs **locally** and is used by both Preview and Preprod. For
+public networks only this one service is needed — the local devnet `node` and
+`indexer` are not used.
+
 ```bash
-# Preferred: the compose service, which pins the image tag
+# Just the proof server (correct for Preview / Preprod)
+docker compose up -d proof-server
+
+# Everything: local node + indexer + proof server (for the `undeployed` devnet)
 npm run proof-server:start
 
-# or run it directly
+# or run it directly, without compose
 docker pull midnightntwrk/proof-server:8.1.0
 docker run -d -p 6300:6300 --name proof-server midnightntwrk/proof-server:8.1.0
 
@@ -109,8 +116,48 @@ docker run -d -p 6300:6300 --name proof-server midnightntwrk/proof-server:8.1.0
 curl http://127.0.0.1:6300   # → {"status":"ok",...}
 ```
 
-> The proof server downloads SRS parameters (~tens of MB) from
-> `srs.midnight.network` on first start, so it needs working DNS and egress.
+> The proof server downloads SRS parameters (~33 MB, cached at `/.cache/midnight`
+> in the container) from `srs.midnight.network` on first start, so it needs working
+> DNS and egress. Persist the cache so later runs skip the download:
+>
+> ```bash
+> docker run -d --name proof-server -p 6300:6300 \
+>   -v midnight-zk-params:/.cache/midnight \
+>   midnightntwrk/proof-server:8.1.0
+> ```
+
+<details>
+<summary><strong>Troubleshooting: proof server exits with "Failed to fetch data from srs.midnight.network"</strong></summary>
+
+In some sandboxed/DinD environments (notably GitHub Codespaces) Docker's
+**user-defined bridge networks have no outbound egress**, so the container cannot
+reach `srs.midnight.network` and the proof server exits with
+`Failed to fetch data from https://srs.midnight.network/... after 3 attempts`.
+
+The tell-tale symptom is DNS looking broken *only* on the compose network:
+
+```bash
+# works (default bridge)
+docker run --rm curlimages/curl -sS -o /dev/null -w '%{http_code}\n' https://srs.midnight.network/bls_midnight_2p10
+
+# fails (compose-created network)
+docker run --rm --network midnight-ballot-devnet_default curlimages/curl -sS -o /dev/null -w '%{http_code}\n' https://srs.midnight.network/bls_midnight_2p10
+```
+
+**Workaround** — run the proof server on the default bridge instead of the compose
+network. It is still reachable on `127.0.0.1:6300`, so nothing else changes:
+
+```bash
+docker rm -f ballot-proof-server 2>/dev/null
+docker run -d --name ballot-proof-server \
+  --network bridge \
+  -p 6300:6300 \
+  -v midnight-zk-params:/.cache/midnight \
+  --restart unless-stopped \
+  midnightntwrk/proof-server:8.1.0
+```
+
+</details>
 
 ## Setup
 
@@ -170,12 +217,102 @@ npm test
 ### End-to-end tests (requires deployed contract)
 
 ```bash
-# Deploy to preview network
-NODE_OPTIONS="--max-old-space-size=12288" npm run deploy -- --network preview
-
-# Run e2e smoke test
 npm run test:e2e
 ```
+
+## Deploy
+
+Deployment targets **Preview** and **Preprod**. Both are public test networks, so
+the deploy needs two things: a locally running proof server, and a wallet funded
+from that network's faucet.
+
+> **Shortcut:** run `npm run address -- --network preview` and
+> `npm run address -- --network preprod` first. That prints both wallet addresses
+> immediately, so you can fund both faucets in one sitting instead of waiting
+> through a sync, funding, and then repeating for the second network.
+
+### How funding works
+
+Each network gets its **own freshly generated wallet** the first time you deploy.
+The seed is written to `.midnight-state.json` (git-ignored) and reused on every
+later run, so your address stays the same and you only fund once per network.
+
+`npm run deploy` is non-interactive and prints the wallet address, then **polls the
+network for up to 10 minutes** waiting for tNIGHT to land. While it waits, open the
+faucet in a browser, paste the address, and request funds — the deploy continues on
+its own as soon as the balance arrives.
+
+> The faucet is protected by a Cloudflare captcha, so funding cannot be scripted.
+> This is the one step that must be done by hand, in a browser.
+
+### Faucets and endpoints
+
+| Network | Faucet | Indexer |
+|---|---|---|
+| **Preview** | [midnight-tmnight-preview.nethermind.dev](https://midnight-tmnight-preview.nethermind.dev) | `https://indexer.preview.midnight.network/api/v4/graphql` |
+| **Preprod** | [midnight-tmnight-preprod.nethermind.dev](https://midnight-tmnight-preprod.nethermind.dev) | `https://indexer.preprod.midnight.network/api/v4/graphql` |
+
+### Step by step
+
+```bash
+# 1. Start the proof server (both networks use the local one on :6300)
+docker compose up -d proof-server
+curl http://127.0.0.1:6300        # → {"status":"ok",...}
+
+# 2. Deploy to Preview
+NODE_OPTIONS="--max-old-space-size=12288" npm run deploy -- --network preview
+```
+
+The run does this, in order:
+
+1. Syncs the wallet with the network (**several minutes on first run**; later runs
+   resume from the checkpoint in `.midnight-wallet-state/`).
+2. Prints `Wallet Address:` and `Balance: 0 tNight`.
+3. Prints the faucet URL and starts polling.
+
+**➡️ Now open the faucet, paste the printed address, and request tNIGHT.**
+
+The deploy then registers the funds for DUST generation, waits for DUST, generates
+proofs against the local proof server, deploys, and finally prints:
+
+```
+✅ Contract deployed successfully!
+
+Contract Address: <address>
+```
+
+4. Repeat for Preprod:
+
+```bash
+NODE_OPTIONS="--max-old-space-size=12288" npm run deploy -- --network preprod
+```
+
+5. Paste both addresses into the [Contract Address](#contract-address) table at the
+top of this README. They are also recorded in `.midnight-state.json`, and you can
+re-print the last one any time with `npm run network`.
+
+### If funding times out
+
+The wallet seed is preserved, so simply re-run the same deploy command — the wallet
+sync resumes from its checkpoint instead of starting over. To extend the wait window:
+
+```bash
+# default is 600000 ms (10 minutes)
+MIDNIGHT_FAUCET_TIMEOUT_MS=1800000 npm run deploy -- --network preview
+```
+
+To get a network's wallet address up front — so you can fund it *before* sitting
+through the first sync — derive it straight from the seed:
+
+```bash
+npm run address -- --network preview
+npm run address -- --network preprod
+```
+
+This creates and persists the wallet for that network, so it is the same address
+the deploy will later use. Once you have deployed, `npm run network` re-prints the
+active network and its last deployment, and `npm run check-balance` shows the
+wallet balance.
 
 ## Contract Architecture
 

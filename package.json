@@ -9,6 +9,7 @@
     "compile": "compact compile contracts/ballot.compact contracts/managed/ballot",
     "build": "npx tsc --noEmit",
     "deploy": "npx tsx src/deploy.ts",
+    "address": "npx tsx scripts/print-address.ts",
     "cli": "npx tsx src/cli.ts",
     "check-balance": "npx tsx src/check-balance.ts",
     "network": "npx tsx src/network.ts",
