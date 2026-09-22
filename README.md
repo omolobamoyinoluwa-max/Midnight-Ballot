@@ -13,6 +13,12 @@ Deployed on Preview on 2026-09-22 from wallet
 `mn_addr_preview1v6jw9pgj2reuuzzednz0wamtn9xfq0em02crwwla6qphruv00j8qxg3ucu`,
 with the constructor argument `Midnight Ballot Election 2026`.
 
+Preprod wallet `mn_addr_preprod1pnvh8undk0hmdawut92w96xazmjvpezwt3kkt54y56qkxjqttegsmq6utn`
+has been funded with 5000 tNight from the faucet — transaction submitted,
+tx ID `005bd8eba5b8ea3fdb0ae1aadd8e4e1696372e4063188275c96a8f985a405b1173`.
+The Preprod contract address will replace the placeholder above once
+`npm run deploy -- --network preprod` completes against this funded wallet.
+
 You can verify it against the public indexer:
 
 ```bash
