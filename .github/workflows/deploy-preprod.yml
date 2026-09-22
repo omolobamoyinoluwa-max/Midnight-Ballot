@@ -1,0 +1,117 @@
+name: Deploy to Preprod
+
+# Manual only — never on a push or PR.
+#
+# This job spends faucet tNIGHT and lands a real contract on the Preprod test
+# network, so it must be triggered deliberately and only once the wallet behind
+# MIDNIGHT_WALLET_SEED_PREPROD has been funded.
+#
+# Why this runs in CI rather than on a laptop: the Compact compiler is published
+# for Linux and macOS only (there is no Windows target), and the proof server is
+# required for Preview/Preprod and ships as a container image. A Linux host with
+# Docker is therefore mandatory. GitHub's ubuntu runner is exactly that, so no
+# local Docker Desktop, WSL or admin rights are needed.
+#
+# Required repository secret:
+#   MIDNIGHT_WALLET_SEED_PREPROD — the 32-byte hex seed of the funded Preprod
+#   wallet. Generate one with `npm run address -- --network preprod`, fund the
+#   address it prints at the Preprod faucet, then store the seed here.
+#
+# The seed is read from the environment and is deliberately never persisted:
+# getOrCreateSeed() returns MIDNIGHT_WALLET_SEED without writing it to
+# .midnight-state.json, so the artifact below carries the deployment record only.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-preprod:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Compact launcher
+        run: |
+          curl --proto '=https' --tlsv1.2 -LsSf https://github.com/midnightntwrk/compact/releases/latest/download/compact-installer.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      # Same pin as ci.yml: compactc 0.31.1 emits language 0.23.0 / runtime
+      # 0.16.0, matching @midnight-ntwrk/compact-runtime 0.16.0.
+      - name: Pin Compact compiler
+        run: compact update 0.31.1
+
+      - name: Verify Compact compiler
+        run: compact --version
+
+      - name: Compile contract
+        run: npm run compile
+
+      - name: Run tests
+        run: npm test
+
+      # Preview and Preprod both prove against a local proof server; only the
+      # `undeployed` devnet needs the node and indexer services alongside it.
+      - name: Start proof server
+        run: docker compose up -d proof-server
+
+      - name: Wait for proof server
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:6300 > /dev/null; then
+              echo "Proof server ready after ${attempt} attempt(s)."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Proof server did not become ready — last logs:"
+          docker compose logs proof-server
+          exit 1
+
+      # Also proves the secret is present before the multi-minute sync starts.
+      - name: Verify Preprod wallet seed
+        env:
+          MIDNIGHT_WALLET_SEED: ${{ secrets.MIDNIGHT_WALLET_SEED_PREPROD }}
+        run: |
+          if [ -z "$MIDNIGHT_WALLET_SEED" ]; then
+            echo "::error::Set the MIDNIGHT_WALLET_SEED_PREPROD repository secret first — see the Deploy section of the README."
+            exit 1
+          fi
+          # Derives and prints the address only (no sync, seed never echoed).
+          npm run address -- --network preprod
+
+      - name: Deploy to Preprod
+        env:
+          MIDNIGHT_WALLET_SEED: ${{ secrets.MIDNIGHT_WALLET_SEED_PREPROD }}
+        run: |
+          NODE_OPTIONS=--max-old-space-size=12288 npm run deploy -- --network preprod
+
+      - name: Show deployment record
+        if: always()
+        run: |
+          if [ -f .midnight-state.json ]; then
+            node -e "const s=require('./.midnight-state.json');console.log(JSON.stringify(s.deployments.preprod ?? null,null,2))"
+          else
+            echo "No .midnight-state.json — the deploy did not reach the record step."
+          fi
+
+      - name: Upload deployment record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: midnight-state-preprod
+          path: .midnight-state.json
+          if-no-files-found: warn
+
+      - name: Stop proof server
+        if: always()
+        run: docker compose down -v
