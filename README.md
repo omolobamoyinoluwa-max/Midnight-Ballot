@@ -12,6 +12,9 @@
 > **Manual step:** run `npm run deploy -- --network preview`, fund the wallet it
 > prints, and paste the contract address it reports into the table above.
 > The address is also recorded in `.midnight-state.json` (git-ignored).
+>
+> **⚠ Blocks submission:** the table above is a placeholder until a real address
+> is pasted in. Level 1 will not pass review with `_Not deployed yet_` here.
 
 ## What This Does
 
@@ -113,7 +116,7 @@ curl http://127.0.0.1:6300   # → {"status":"ok",...}
 
 ```bash
 # Clone the repository
-git clone <your-repo-url>
+git clone https://github.com/omolobamoyinoluwa-max/Midnight-Ballot.git
 cd Midnight-Ballot
 
 # Install dependencies
@@ -208,8 +211,13 @@ This project is a proof-of-concept for confidential on-chain governance. The sam
 
 ## Screenshots
 
-> **Manual step:** add image screenshots of these terminal runs before submitting.
-> The captured text is below.
+> **Manual step — required before submitting:** capture real PNG screenshots of the
+> runs below, save the image files into the repo and embed them here.
+>
+> The blocks below are **plain-text transcripts**, not images. They were re-verified
+> against a clean checkout (Compact launcher 0.5.2, compiler 0.31.1 holding language
+> 0.23.0 / runtime 0.16.0, `npm run compile && npm test` → 31 passing, 0 skipped),
+> but text alone does **not** satisfy the challenge's screenshot requirement.
 
 ### Compilation Output
 
