@@ -4,17 +4,29 @@
 
 ## Contract Address
 
-| Network  | Address                        |
-|----------|--------------------------------|
-| Preview  | _Not deployed yet — see Setup_ |
-| Preprod  | _Not deployed yet — see Setup_ |
+| Network  | Contract Address                                                      |
+|----------|-----------------------------------------------------------------------|
+| Preview  | `66d5bbeda6bf264c040c7cd17ac3541f276555f0d38a421f64a0c95f61056200`   |
+| Preprod  | _pending — see [Deploy](#deploy)_                                     |
 
-> **To populate this table:** follow [Deploy](#deploy) below. The deploy prints a
-> wallet address to fund at the network's faucet, then prints the contract address.
+Deployed on Preview on 2026-09-22 from wallet
+`mn_addr_preview1v6jw9pgj2reuuzzednz0wamtn9xfq0em02crwwla6qphruv00j8qxg3ucu`,
+with the constructor argument `Midnight Ballot Election 2026`.
+
+You can verify it against the public indexer:
+
+```bash
+curl -sS -X POST -H 'Content-Type: application/json' \
+  -d '{"query":"query { contract(address: \"66d5bbeda6bf264c040c7cd17ac3541f276555f0d38a421f64a0c95f61056200\") { address state } }"}' \
+  https://indexer.preview.midnight.network/api/v4/graphql
+```
+
+> **To populate a row:** follow [Deploy](#deploy) below. The deploy prints a wallet
+> address to fund at the network's faucet, then prints the contract address.
 > Addresses are also recorded in `.midnight-state.json` (git-ignored).
 >
-> **⚠ Blocks submission:** the table above is a placeholder until a real address
-> is pasted in. Level 1 will not pass review with `_Not deployed yet_` here.
+> **⚠ Blocks submission:** the Preprod row is still a placeholder, and Level 1 will
+> not pass review until every row holds a real deployed address.
 
 ## What This Does
 
