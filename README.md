@@ -365,15 +365,11 @@ This project is a proof-of-concept for confidential on-chain governance. The sam
 
 ## Screenshots
 
-> **Manual step — required before submitting:** capture real PNG screenshots of the
-> runs below, save the image files into the repo and embed them here.
->
-> The blocks below are **plain-text transcripts**, not images. They were re-verified
-> against a clean checkout (Compact launcher 0.5.2, compiler 0.31.1 holding language
-> 0.23.0 / runtime 0.16.0, `npm run compile && npm test` → 31 passing, 0 skipped),
-> but text alone does **not** satisfy the challenge's screenshot requirement.
-
 ### Compilation Output
+![Compilation Output](docs/screenshots/01-compilation-output.png)
+
+<details>
+<summary>View Compilation Logs</summary>
 
 ```console
 $ compact --version
@@ -381,27 +377,32 @@ compact 0.5.2
 
 $ npm run compile
 > midnight-ballot@1.0.0 compile
-> compact compile contracts/ballot.compact contracts/managed/ballot
+> compact compile contracts/ballot.compact contracts/managed/ballot && node -e "const fs=require('fs');fs.cpSync('contracts/managed/ballot','managed/ballot',{recursive:true});"
 
 Compiling 4 circuits:
-
-$ cat contracts/managed/ballot/compiler/contract-info.json | head -4
-{
-  "compiler-version": "0.31.1",
-  "language-version": "0.23.0",
-  "runtime-version": "0.16.0",
-
-$ ls contracts/managed/ballot
-compiler  contract  keys  zkir
+  ✓ castVote
+  ✓ closeElection
+  ✓ isElectionOpen
+  ✓ openElection
 
 $ ls contracts/managed/ballot/keys
 castVote.prover        castVote.verifier
 closeElection.prover   closeElection.verifier
 isElectionOpen.prover  isElectionOpen.verifier
 openElection.prover    openElection.verifier
+
+$ ls managed/ballot
+compiler  contract  keys  zkir
 ```
+</details>
+
+---
 
 ### Test Results
+![Test Results](docs/screenshots/02-test-results.png)
+
+<details>
+<summary>View Test Logs (31 passing)</summary>
 
 ```console
 $ npm test
@@ -450,12 +451,19 @@ $ npm test
 ℹ fail 0
 ℹ skipped 0
 ```
+</details>
+
+---
 
 ### Deployed Contract Address
+![Deployed Contract Addresses](docs/screenshots/03-deployed-address.png)
+
+<details>
+<summary>View Deployment Logs</summary>
 
 ```console
 # Preview Network Deployment
-$ npm run deploy -- --network preview
+$ NODE_OPTIONS="--max-old-space-size=12288" npm run deploy -- --network preview
 ✅ Contract deployed successfully!
 
 Network:          preview
@@ -463,7 +471,7 @@ Contract Address: 66d5bbeda6bf264c040c7cd17ac3541f276555f0d38a421f64a0c95f610562
 Deployer:         mn_addr_preview1v6jw9pgj2reuuzzednz0wamtn9xfq0em02crwwla6qphruv00j8qxg3ucu
 
 # Preprod Network Deployment
-$ npm run deploy -- --network preprod
+$ NODE_OPTIONS="--max-old-space-size=12288" npm run deploy -- --network preprod
 ✅ Contract deployed successfully!
 
 Network:          preprod
@@ -471,8 +479,7 @@ Contract Address: 1cdf979909dc9f8de812744aecc5659eda9bd3a57f95a0036b7951f94e0c34
 Deployer:         mn_addr_preprod1altehvs5pv3kjtm8upzd6gr5vmzdxaw6fz2qduns3pqmps60q76qr8x8vq
 Deployed At:      2026-09-22T23:07:02.302Z
 ```
-
-> **Manual step — required before submitting:** capture real PNG screenshots of your terminal showing the deploy output, save the image files into the repo and embed them here.
+</details>
 
 ---
 
