@@ -5,3 +5,5 @@ dist/
 .midnight-wallet-state-dir/
 *.log
 .env
+.vercel
+.env*
