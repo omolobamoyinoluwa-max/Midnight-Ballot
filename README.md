@@ -1,99 +1,452 @@
 # Midnight Ballot
 
-> A privacy-preserving voting smart contract built on the Midnight Network using Compact, enabling users to cast verifiable votes without revealing their choices.
+> A privacy-preserving voting dApp on the Midnight Network: cast a verifiable ballot on Preprod without revealing who you are or which tally you moved.
+
+A Compact smart contract holds the public election state, and a React + Vite frontend
+drives it through the Midnight.js SDK and the Lace wallet. The voter's credential is a
+private witness that never leaves the browser — only a zero-knowledge proof and a
+one-way nullifier reach the chain.
+
+---
+
+## Live Demo
+
+> **https://midnight-ballot-one.vercel.app**
+
+The deployed site connects to the **Preprod** contract below with no extra configuration —
+the address is the build default. The compiled circuit artifacts it fetches are served
+from the same origin at `/zk/ballot/keys/*` and `/zk/ballot/zkir/*`.
+
+Requires the Lace wallet for Midnight, switched to **Preprod**. Deploy commands are in
+[Deploy the frontend](#deploy-the-frontend).
+
+---
 
 ## Contract Address
 
-| Network  | Contract Address                                                      |
-|----------|-----------------------------------------------------------------------|
-| Preview  | `66d5bbeda6bf264c040c7cd17ac3541f276555f0d38a421f64a0c95f61056200`   |
+| Network  | Address                                                              |
+|----------|----------------------------------------------------------------------|
 | Preprod  | `1cdf979909dc9f8de812744aecc5659eda9bd3a57f95a0036b7951f94e0c3497`   |
+| Preview  | `66d5bbeda6bf264c040c7cd17ac3541f276555f0d38a421f64a0c95f61056200`   |
 
-Both Preview and Preprod contracts are deployed and verified on-chain!
+**Preprod is the deployment this dApp uses.** The address is the default in
+[`src/midnight.ts`](src/midnight.ts) (`BALLOT_CONTRACT_ADDRESS`) and can be overridden
+per build with `VITE_BALLOT_CONTRACT_ADDRESS` — see
+[Frontend configuration](#frontend-configuration).
 
-### Preview Deployment
-- **Contract Address:** `66d5bbeda6bf264c040c7cd17ac3541f276555f0d38a421f64a0c95f61056200`
-- **Deployer Wallet:** `mn_addr_preview1v6jw9pgj2reuuzzednz0wamtn9xfq0em02crwwla6qphruv00j8qxg3ucu`
-- **Constructor Argument:** `Midnight Ballot Election 2026`
-- **Indexer Verification:**
-  ```bash
-  curl -sS -X POST -H 'Content-Type: application/json' \
-    -d '{"query":"query { contract(address: \"66d5bbeda6bf264c040c7cd17ac3541f276555f0d38a421f64a0c95f61056200\") { address state } }"}' \
-    https://indexer.preview.midnight.network/api/v4/graphql
-  ```
+Both contracts are deployed and indexed. Verify either one against the indexer:
 
-### Preprod Deployment
-- **Contract Address:** `1cdf979909dc9f8de812744aecc5659eda9bd3a57f95a0036b7951f94e0c3497`
-- **Deployer Wallet:** `mn_addr_preprod1altehvs5pv3kjtm8upzd6gr5vmzdxaw6fz2qduns3pqmps60q76qr8x8vq`
-- **Deployed At:** `2026-09-22T23:07:02.302Z`
-- **Indexer Verification:**
-  ```bash
-  curl -sS -X POST -H 'Content-Type: application/json' \
-    -d '{"query":"query { contract(address: \"1cdf979909dc9f8de812744aecc5659eda9bd3a57f95a0036b7951f94e0c3497\") { address state } }"}' \
-    https://indexer.preprod.midnight.network/api/v4/graphql
-  ```
+```bash
+curl -sS -X POST -H 'Content-Type: application/json' \
+  -d '{"query":"query { contract(address: \"1cdf979909dc9f8de812744aecc5659eda9bd3a57f95a0036b7951f94e0c3497\") { address state } }"}' \
+  https://indexer.preprod.midnight.network/api/v4/graphql
+```
+
+<details>
+<summary>Deployment records</summary>
+
+**Preprod**
+
+- Deployer: `mn_addr_preprod1altehvs5pv3kjtm8upzd6gr5vmzdxaw6fz2qduns3pqmps60q76qr8x8vq`
+- Deployed at: `2026-09-22T23:07:02.302Z`
+- Constructor argument: `Midnight Ballot Election 2026`
+
+**Preview**
+
+- Deployer: `mn_addr_preview1v6jw9pgj2reuuzzednz0wamtn9xfq0em02crwwla6qphruv00j8qxg3ucu`
+- Constructor argument: `Midnight Ballot Election 2026`
+
+Both runs are recorded in `.midnight-state.json` (git-ignored); `npm run network`
+re-prints the active network and its last deployment.
+
+</details>
+
+---
 
 ## What This Does
 
-Midnight Ballot demonstrates how zero-knowledge smart contracts on the Midnight Network can power confidential elections. Voters cast ballots through a privacy-preserving circuit that proves:
+Midnight Ballot is a confidential election. A voter picks Candidate A or Candidate B,
+the browser generates a zero-knowledge proof that the ballot is valid, and the wallet
+submits it. The contract then:
 
-- The voter knows a valid voter secret (witness)
-- The voter has not already voted (nullifier check)
-- The vote choice is valid (type-constrained to candidate A or B)
-- The election is currently open
+- verifies the election is open,
+- derives the voter's **nullifier** — a one-way hash of their private credential —
+  and rejects the ballot if that nullifier is already spent,
+- increments the total, and exactly one candidate's tally.
 
-**Only aggregate vote counters change on-chain.** An observer can see that a vote was cast and which candidate's tally increased, but cannot link any vote to a specific voter. The voter's identity and private witness data are never exposed on the public ledger.
+In plain English: **the tally is public and independently verifiable, but no ballot can
+be traced back to a voter.** Anyone can see that *a* vote was cast and *which tally
+moved*; nobody can see *who* cast it, and nobody can vote twice.
+
+### What the user does
+
+1. Connect the Lace wallet (Preprod).
+2. Read the live on-chain tally, pulled from the Preprod indexer.
+3. Choose a candidate and submit a ballot. A proof is generated on the voter's machine;
+   the wallet signs and submits it.
+4. See the transaction result — transaction id, block height, and the nullifier the
+   contract published.
+
+The private input is never rendered. The UI states the guarantee where the proof is
+actually produced: **“🔒 Proved without revealing your input.”**
+
+---
 
 ## Privacy Model
 
-### PUBLIC (on-chain, visible to anyone)
+### What is PUBLIC
 
-| Field | Type | Description |
+Everything below is on the ledger and readable by anyone, including this dApp's UI.
+
+| Value | Type | Description |
 |---|---|---|
 | `electionId` | `Opaque<"string">` | Human-readable election name |
 | `electionOpen` | `Boolean` | Whether voting is currently allowed |
-| `totalVotes` | `Counter` | Total number of votes cast |
+| `totalVotes` | `Counter` | Total ballots cast |
 | `candidateAVotes` | `Counter` | Aggregate tally for Candidate A |
 | `candidateBVotes` | `Counter` | Aggregate tally for Candidate B |
-| `nullifierSpent` | `Map<Nullifier, Boolean>` | Set of spent nullifiers (prevents double-voting) |
+| `nullifierSpent` | `Map<Nullifier, Boolean>` | Spent nullifiers — hashes only, no identities |
 
-### PRIVATE (witness, never on-chain, never disclosed)
+### What is PRIVATE
 
-| Field | Type | Description |
+| Value | Type | Description |
 |---|---|---|
-| `voterSecret` | `Bytes<32>` | Voter's private identity credential — the only witness |
+| `voterSecret` | `Bytes<32>` | The voter's credential. The contract's only witness. Never on-chain, never disclosed, never displayed. |
 
-### DISCLOSED BY DESIGN (revealed by an explicit `disclose()`, never the secret)
+### What the user PROVES without revealing
 
-| Value | Type | Why it is public |
-|---|---|---|
-| `nullifier` | `Bytes<32>` | Publishing the hash of the voter secret is what makes double-voting detectable without identifying the voter |
-| `candidateChoice` | `Uint<0..2>` | Circuit argument; disclosing it is what lets the public tally move — *which* tally grew is public, *who* grew it is not |
+Each `castVote` call proves, in zero knowledge:
 
-### ZERO-KNOWLEDGE PROOF
+1. **Knowledge of a valid credential** — the caller knows a secret whose hash is the
+   nullifier it publishes (`preimage resistance`).
+2. **No double voting** — that nullifier is fresh, and the call marks it spent, so a
+   second ballot from the same credential is rejected on-chain.
+3. **A valid vote** — `candidateChoice` is type-constrained to `Uint<0..2>`, which
+   admits exactly `{0, 1}`.
+4. **An open election** — an `assert(electionOpen == true)` gate runs before any tally
+   moves.
 
-Each `castVote` call proves, without revealing:
+None of those proofs reveal the credential, the voter's address, or a link between the
+nullifier and any other vote.
 
-- **Knowledge of a voter secret** — the caller provides a witness (`getVoterSecret`) whose hash is the nullifier it publishes
-- **No double-voting** — the derived nullifier is checked against `nullifierSpent` and marked as spent on first use
-- **Valid vote** — `candidateChoice` is type-constrained: Compact's `Uint<a..b>` admits `a..b-1`, so `Uint<0..2>` admits exactly `{0, 1}`. (`Uint<0..1>` would admit only `0` and make Candidate B unreachable — the bound is deliberate.)
-- **Election open** — an `assert(electionOpen == true)` gate prevents voting after closure
+### Disclosed by design
 
-The voter's identity (`voterSecret`) is the one thing never disclosed: only its hash (the nullifier) is published, and `persistentHash` with domain-separated tags cannot be reversed to the secret. The `disclose()` calls on the nullifier and the candidate choice are deliberate and commented in the contract — they enable the public double-vote guard and the public tally while preserving voter anonymity.
+Two values are revealed on purpose — neither is the secret:
+
+| Value | Why it is public |
+|---|---|
+| `nullifier` | Publishing the hash of the credential is what makes double voting detectable without identifying the voter. |
+| `candidateChoice` | Disclosing the choice is what lets the public tally move. *Which* tally grew is public; *who* grew it is not. |
+
+The credential itself is hashed, never disclosed: the `disclose()` calls sit on the
+nullifier and the candidate choice only, and the contract's own test suite asserts this.
+
+---
+
+## Privacy Claim
+
+> **An on-chain observer sees that a ballot was cast, which tally moved, and a nullifier
+> — a one-way hash. They cannot learn who cast it, cannot reverse the nullifier to a
+> voter's credential or address, and cannot link two ballots to the same person unless
+> they already know that person's secret.**
+
+Concretely:
+
+- **Visible to an observer:** the four public counters, the election name, whether
+  voting is open, and the set of spent nullifiers.
+- **Not visible to an observer:** the voter's credential, the voter's wallet address in
+  relation to any ballot, the credential behind any nullifier, and any link between two
+  ballots — including a repeat vote from the same credential (which is simply rejected,
+  with no indication of *who* tried).
+- **The double-vote guard is the one place the system deliberately trades a little
+  unlinkability for integrity:** the same credential always yields the same nullifier.
+  That is what makes replay detectable. It reveals nothing about the voter's identity,
+  because the nullifier is domain-separated
+  (`persistentHash(["midnight-ballot:nullifier:v1", secret])`) and cannot be reversed.
+
+### Where the proof is generated
+
+Worth being precise about, since proofs about private data are only as private as the
+machine that computes them. The dApp prefers, in this order:
+
+1. **The wallet as prover** — `getProvingProvider()`. The wallet runs the prover
+   locally, so the witness preimage never leaves the user's machine.
+2. **The wallet's configured proof server** — only if the wallet exposes no proving
+   provider. In that case the preimage is sent to that proof server, which is a weaker
+   privacy posture and is why it is the fallback rather than the default.
+
+Either way the **credential never leaves the browser** and is never written to a log, a
+URL, or the DOM. See `resolveProofProvider` in [`src/midnight.ts`](src/midnight.ts).
+
+---
 
 ## Tech Stack
 
-- **Midnight Network** — privacy-first blockchain with ZK smart contracts
-- **Compact** — domain-specific smart contract language (v0.23+)
-- **Node.js** v22+
-- **Docker** — for the proof server
-- **TypeScript** — test runner and DApp integration
+- **Midnight Network** — privacy-first blockchain with ZK smart contracts (Preprod)
+- **Compact** — smart contract language (v0.23, compiled with compactc 0.31.1)
+- **Midnight.js SDK** — `dapp-connector-api`, `midnight-js-contracts`,
+  `midnight-js-fetch-zk-config-provider`, `midnight-js-indexer-public-data-provider`,
+  `midnight-js-http-client-proof-provider`, `midnight-js-types`
+- **React 19 + Vite 7** — dApp frontend
+- **Lace wallet** — Midnight wallet extension via the DApp Connector API
+- **TypeScript**, Node.js v22
+
+---
 
 ## Prerequisites
 
-- **Node.js** ≥ 22.0.0 ([download](https://nodejs.org))
-- **Docker** ([download](https://docker.com))
-- **Compact CLI** ([install guide](https://docs.midnight.network/getting-started/installation))
+- **Lace wallet for Midnight** installed and unlocked — [lace.io/midnight](https://www.lace.io/midnight)
+- **Node.js v22** ([download](https://nodejs.org)) — the repo pins this in `.nvmrc`
+- For deploying the *contract* (not needed to run the dApp against the existing Preprod
+  deployment): **Docker** and the **Compact CLI**
+
+The Lace wallet must be switched to **Preprod**. The dApp refuses to continue on any
+other network rather than failing confusingly later.
+
+---
+
+## File Structure
+
+```
+midnight-ballot/
+├── contracts/
+│   └── ballot.compact              # Compact voting contract
+├── managed/
+│   └── ballot/                     # Compiled artifacts (mirror of contracts/managed)
+├── src/
+│   ├── components/
+│   │   ├── WalletConnect.tsx       # wallet connect / disconnect UI + error states
+│   │   └── CircuitCall.tsx         # circuit call button, proof loading state, result
+│   ├── hooks/
+│   │   └── useMidnight.ts          # Midnight.js SDK hook (wallet, providers, vote)
+│   ├── midnight.ts                 # SDK wiring: discovery, providers, contract, witness
+│   ├── App.tsx
+│   ├── main.tsx
+│   └── styles.css
+│   # Node toolchain (Level 1) — type checked by tsconfig.json, not shipped to the browser
+│   ├── deploy.ts, cli.ts, network.ts, wallet.ts, wallet-state.ts
+├── tests/
+│   └── ballot.test.ts              # 31 tests (source assertions, ledger model, circuits)
+├── scripts/                        # print-address, e2e-check
+├── public/
+│   └── favicon.svg
+├── .github/workflows/              # CI: compile → test → typecheck → build
+├── index.html                      # Vite entry
+├── vite.config.ts                  # serves contracts/managed as /zk/ballot
+├── vercel.json                     # Vercel deploy config
+├── netlify.toml                    # Netlify deploy config
+└── package.json
+```
+
+> The Level 2 spec sketches this structure around a `counter.compact` template. This repo
+> is the Level 1 **ballot** contract, so `CircuitCall.tsx` calls `castVote` on the ballot
+> contract, and the SDK wiring lives in a single `src/midnight.ts` (mirroring the
+> reference Midnight dApp layout) rather than being inlined into the hook.
+
+---
+
+## Run Locally
+
+### 1. Clone and install
+
+```bash
+git clone https://github.com/omolobamoyinoluwa-max/Midnight-Ballot.git
+cd Midnight-Ballot
+npm install
+```
+
+### 2. Start the dApp
+
+```bash
+npm run dev
+```
+
+Open **http://localhost:5173**.
+
+That is all that is needed to use the deployed Preprod contract: the compiled circuit
+artifacts are already committed under `contracts/managed/ballot`, and `vite.config.ts`
+serves them at `/zk/ballot/keys/*` and `/zk/ballot/zkir/*` — the paths the SDK's
+`FetchZkConfigProvider` reads from.
+
+### 3. Use it
+
+1. Unlock Lace and switch it to **Preprod**.
+2. Click **Connect Lace wallet**. The address appears on screen.
+3. Read the live tally, pick a candidate, and wait for the proof and the transaction.
+4. The transaction id, block height, and the published nullifier appear under
+   **Transaction result**.
+
+<details>
+<summary><strong>Try the double-vote guard (a good demo beat)</strong></summary>
+
+Vote once, then try to vote again from the same browser. The contract rejects the second
+ballot — its nullifier is already in `nullifierSpent` — and the UI explains why in
+plain language.
+
+Then click **new voter credential** in the Privacy model panel. That mints a fresh,
+unlinkable credential, so the *same browser* can now vote as a second, distinct voter.
+That is the property the design is for: one vote per credential, with no way to tell
+the two ballots came from the same machine.
+
+The credential is stored in `localStorage` so that reloading the page does not silently
+mint a new voter. The "new voter credential" control rotates it deliberately.
+
+</details>
+
+### Frontend configuration
+
+Both variables are optional; the defaults target the Preprod deployment above.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `VITE_BALLOT_CONTRACT_ADDRESS` | Preprod address in the table above | Point the dApp at a different deployment |
+| `VITE_MIDNIGHT_NETWORK` | `preprod` | Network the wallet must be on |
+| `VITE_ZK_ASSETS_BASE_URL` | `<origin>/zk/ballot` | Serve ZK artifacts from elsewhere, e.g. a CDN |
+
+```bash
+# Example: build against the Preview deployment instead
+VITE_BALLOT_CONTRACT_ADDRESS=66d5bbeda6bf264c040c7cd17ac3541f276555f0d38a421f64a0c95f61056200 \
+VITE_MIDNIGHT_NETWORK=preview \
+npm run build:frontend
+```
+
+### Build and verify
+
+```bash
+npm run build          # type checks both projects, then builds the dApp into dist/
+npm run preview        # serve the production build locally
+npm run typecheck      # Node toolchain + browser dApp, separately
+npm test               # 31 contract tests
+```
+
+---
+
+## Deploy the frontend
+
+Both platform configurations are committed. Settings come from the config files only.
+
+### Vercel
+
+The project is already linked as `midnight-ballot` and connected to this GitHub repo, so
+pushing to `main` redeploys automatically. To deploy by hand:
+
+```bash
+npx vercel              # preview deploy
+npx vercel --prod       # production deploy → prints the live URL
+```
+
+Settings come from `vercel.json` (`framework: vite`, `buildCommand: npm run build`,
+`outputDirectory: dist`).
+
+> **The project name must be lowercase.** Vercel derives a new project's name from the
+directory, and `Midnight-Ballot` is rejected outright — hence the explicit
+`vercel link --project midnight-ballot`. Reproducing this from scratch:
+>
+> ```bash
+> npx vercel link --yes --project midnight-ballot
+> npx vercel --prod --yes
+> ```
+
+### Netlify
+
+```bash
+npm install -g netlify-cli   # or use npx
+netlify login
+netlify init                 # first run: links or creates the site
+netlify deploy --build --prod # builds with netlify.toml and deploys → prints the live URL
+```
+
+Or build locally and push the folder:
+
+```bash
+npm run build
+npx netlify deploy --prod --dir=dist
+```
+
+Settings come from `netlify.toml` (`command: npm run build`, `publish: dist`).
+
+### Deployment notes
+
+- Set the Node version to **22** if the platform does not read `.nvmrc` / `engines`.
+- Vercel's JSON schema rejects comments, so the header rules in `vercel.json` are
+  self-documenting only by their `source` patterns: `/zk/ballot/(.*)` gets
+  `application/octet-stream` (the circuit artifacts have unknown extensions), and
+  `/assets/(.*)` is immutable because Vite fingerprints those filenames.
+- There is deliberately **no SPA catch-all rewrite**. The app has a single route, and a
+  `/* -> /index.html` rule would answer a missing ZK artifact with `200` + HTML, which
+  the Midnight SDK reports as a confusing *"Expected ZK artifact, but received
+  text/html"*.
+- The build defaults to the Preprod contract, so no environment variables need to be set
+  on the platform.
+
+---
+
+## Demo Video
+
+> **[PLACEHOLDER — I will add the link after recording]**
+
+Target: **under 2 minutes.** Four beats:
+
+| # | Beat | What to show |
+|---|---|---|
+| 1 | **Connect the wallet** | Click *Connect Lace wallet*, approve in Lace, and let the `mn_addr_preprod1…` address render on screen. Point out the `preprod` badge. |
+| 2 | **Call the circuit** | Pick a candidate and submit. Hold on the loading state — *“Generating zero-knowledge proof locally…”* — and say that the proof is being computed on this machine, not on a server. |
+| 3 | **Show the on-chain result** | When it lands, show the **Transaction result** card: ballot, status `Finalized`, transaction id, block height, and the published nullifier. Then click *refresh* on the tally panel and show the counter tick up. |
+| 4 | **Point out what was never shown** | Say explicitly: *the private input was never displayed anywhere in this UI* — no secret, no passphrase, no value derived from it other than the one-way nullifier the contract publishes on purpose. |
+
+Optional 10-second bonus if there is time: vote a second time and let the contract reject
+it with *"already cast a ballot"*, then hit **new voter credential** and vote again as a
+second unlinkable voter.
+
+---
+
+## How It Works
+
+### Contracts
+
+| Circuit | Type | Description |
+|---|---|---|
+| `castVote(candidateChoice)` | Impure | Cast a private ballot (updates ledger state) |
+| `openElection()` | Impure | Open voting |
+| `closeElection()` | Impure | Close voting |
+| `isElectionOpen()` | Impure | Check election status |
+| `deriveVoterCommitment(secret)` | Pure | Derive a public commitment from a voter secret |
+| `deriveNullifier(secret)` | Pure | Derive the per-voter nullifier |
+
+### The dApp's moving parts
+
+| File | Responsibility |
+|---|---|
+| [`src/midnight.ts`](src/midnight.ts) | Wallet discovery via `window.midnight`, the DApp Connector handshake, the provider set, the Compact contract binding and its witnesses, the voter credential, and public ledger reads. |
+| [`src/hooks/useMidnight.ts`](src/hooks/useMidnight.ts) | React state for the connection, the live tally and the in-flight ballot. Owns the voting lifecycle. |
+| [`src/components/WalletConnect.tsx`](src/components/WalletConnect.tsx) | Connect / disconnect, the address display, and the three connection failure modes. |
+| [`src/components/CircuitCall.tsx`](src/components/CircuitCall.tsx) | Candidate choice, the proof loading state, the transaction result, and the privacy label. |
+
+The provider set maps onto the wallet as the trust boundary:
+
+| Provider | Role in this dApp |
+|---|---|
+| `publicDataProvider` | Reads the tally from the Preprod indexer |
+| `zkConfigProvider` | Fetches `.prover` / `.verifier` / `.bzkir` from `/zk/ballot` |
+| `proofProvider` | Proof generation, delegated to the wallet when it can prove |
+| `walletProvider` | Balancing and signing, via `balanceUnsealedTransaction` |
+| `midnightProvider` | Submission, via `submitTransaction` |
+| `privateStateProvider` | Holds the in-session credential for the witness |
+
+Two integration details worth knowing if you extend this:
+
+- **`getProvingProvider` is feature-detected.** It is part of the connector API, but
+  shipping wallets do not all implement it, so a hard call would break those users.
+- **`isomorphic-ws`'s browser build only default-exports its constructor**, so the SDK's
+  `webSocketImpl = ws.WebSocket` default resolves to `undefined` in a bundle. The dApp
+  passes the platform `WebSocket` explicitly so indexer subscriptions work.
+
+---
+
+## Contract Development (Level 1)
+
+Everything below applies to changing or redeploying the contract itself. It is **not**
+needed to run the dApp against the existing Preprod deployment.
 
 ### Install the Compact toolchain
 
@@ -112,43 +465,33 @@ compact update 0.31.1
 compact --version
 ```
 
-### Run the proof server
-
-The proof server runs **locally** and is used by both Preview and Preprod. For
-public networks only this one service is needed — the local devnet `node` and
-`indexer` are not used.
+### Compile
 
 ```bash
-# Just the proof server (correct for Preview / Preprod)
-docker compose up -d proof-server
-
-# Everything: local node + indexer + proof server (for the `undeployed` devnet)
-npm run proof-server:start
-
-# or run it directly, without compose
-docker pull midnightntwrk/proof-server:8.1.0
-docker run -d -p 6300:6300 --name proof-server midnightntwrk/proof-server:8.1.0
-
-# Verify
-curl http://127.0.0.1:6300   # → {"status":"ok",...}
+npm run compile
+ls contracts/managed/ballot/contract/     # → index.js, index.d.ts
 ```
 
-> The proof server downloads SRS parameters (~33 MB, cached at `/.cache/midnight`
-> in the container) from `srs.midnight.network` on first start, so it needs working
-> DNS and egress. Persist the cache so later runs skip the download:
->
-> ```bash
-> docker run -d --name proof-server -p 6300:6300 \
->   -v midnight-zk-params:/.cache/midnight \
->   midnightntwrk/proof-server:8.1.0
-> ```
+> Recompiling regenerates `contracts/managed/ballot`, which the dApp serves. Prover keys
+> are ~2.8 MB and must always match the deployed contract — a mismatch surfaces as
+> *"Failed to configure verifier key"* at runtime.
+
+### Run the proof server
+
+Runs **locally** and is used by both Preview and Preprod. For public networks only this
+one service is needed.
+
+```bash
+docker compose up -d proof-server
+curl http://127.0.0.1:6300        # → {"status":"ok",...}
+```
 
 <details>
 <summary><strong>Troubleshooting: proof server exits with "Failed to fetch data from srs.midnight.network"</strong></summary>
 
 In some sandboxed/DinD environments (notably GitHub Codespaces) Docker's
-**user-defined bridge networks have no outbound egress**, so the container cannot
-reach `srs.midnight.network` and the proof server exits with
+**user-defined bridge networks have no outbound egress**, so the container cannot reach
+`srs.midnight.network` and the proof server exits with
 `Failed to fetch data from https://srs.midnight.network/... after 3 attempts`.
 
 The tell-tale symptom is DNS looking broken *only* on the compose network:
@@ -176,31 +519,14 @@ docker run -d --name ballot-proof-server \
 
 </details>
 
-## Setup
-
-```bash
-# Clone the repository
-git clone https://github.com/omolobamoyinoluwa-max/Midnight-Ballot.git
-cd Midnight-Ballot
-
-# Install dependencies
-npm install
-
-# Compile the contract
-npm run compile
-
-# Verify compilation
-ls contracts/managed/ballot/contract/
-```
-
-## Run Tests
+### Tests
 
 ```bash
 npm test
 ```
 
-The suite has two layers, so it is useful on a fresh clone *and* exhaustive once
-the contract is compiled:
+The suite has two layers, so it is useful on a fresh clone *and* exhaustive once the
+contract is compiled:
 
 | Layer | Tests | Status |
 |---|---|---|
@@ -211,127 +537,76 @@ the contract is compiled:
 
 **31 tests, 0 skipped** on a compiled checkout.
 
-**Offline layer — no compiler, Docker or proof server required.** It asserts that
-the contract source really declares the public ledger state, the private witness,
-the deliberate `disclose()` calls and the public/private header comment, and it
-exercises a reference model of the ledger (`castVote` / `closeElection` /
-`openElection`) built on the same `persistentHash` builtin. This layer verifies:
+**Offline layer — no compiler, Docker or proof server required.** It asserts that the
+contract source really declares the public ledger state, the private witness, the
+deliberate `disclose()` calls and the public/private header comment, and it exercises a
+reference model of the ledger (`castVote` / `closeElection` / `openElection`) built on the
+same `persistentHash` builtin. This layer verifies:
 
 - Commitment and nullifier derivation are deterministic and domain-separated
 - Voter secrets never appear in ledger state and the nullifier is one-way
 - Different voters are counted separately, one vote per nullifier
-- Votes are rejected on a closed election and after reopening they resume
+- Votes are rejected on a closed election, and resume after reopening
 
-**Compiled layer — runs the real generated circuits.** Once `npm run compile` has
-produced `contracts/managed/ballot/`, the simulator tests execute the actual
-circuits in-process (no network, no proof server):
+**Compiled layer — runs the real generated circuits.** Once `npm run compile` has produced
+`contracts/managed/ballot/`, the simulator tests execute the actual circuits in-process
+(no network, no proof server):
 
 ```bash
 npm run compile
 npm test
 ```
 
-### End-to-end tests (requires deployed contract)
+### End-to-end check (requires a deployed contract)
 
 ```bash
 npm run test:e2e
 ```
 
-## Deploy
+### Deploy the contract
 
-Deployment targets **Preview** and **Preprod**. Both are public test networks, so
-the deploy needs two things: a locally running proof server, and a wallet funded
-from that network's faucet.
+Deployment targets **Preview** and **Preprod**. Both are public test networks, so the
+deploy needs two things: a locally running proof server, and a wallet funded from that
+network's faucet.
 
-> **Shortcut:** run `npm run address -- --network preview` and
-> `npm run address -- --network preprod` first. That prints both wallet addresses
-> immediately, so you can fund both faucets in one sitting instead of waiting
-> through a sync, funding, and then repeating for the second network.
+> **Shortcut:** run `npm run address -- --network preprod` first. That prints the wallet
+> address immediately, so you can fund the faucet without waiting through a sync.
 
-### How funding works
+**How funding works.** Each network gets its own freshly generated wallet the first time
+you deploy. The seed is written to `.midnight-state.json` (git-ignored) and reused on
+every later run, so your address is stable and you only fund once per network.
 
-Each network gets its **own freshly generated wallet** the first time you deploy.
-The seed is written to `.midnight-state.json` (git-ignored) and reused on every
-later run, so your address stays the same and you only fund once per network.
-
-`npm run deploy` is non-interactive and prints the wallet address, then **polls the
+`npm run deploy` is non-interactive: it prints the wallet address, then **polls the
 network for up to 10 minutes** waiting for tNIGHT to land. While it waits, open the
-faucet in a browser, paste the address, and request funds — the deploy continues on
-its own as soon as the balance arrives.
+faucet in a browser, paste the address, and request funds — the deploy continues on its
+own as soon as the balance arrives.
 
-> The faucet is protected by a Cloudflare captcha, so funding cannot be scripted.
-> This is the one step that must be done by hand, in a browser.
-
-### Faucets and endpoints
+> The faucet is protected by a Cloudflare captcha, so funding cannot be scripted. This is
+> the one step that must be done by hand, in a browser.
 
 | Network | Faucet | Indexer |
 |---|---|---|
 | **Preview** | [midnight-tmnight-preview.nethermind.dev](https://midnight-tmnight-preview.nethermind.dev) | `https://indexer.preview.midnight.network/api/v4/graphql` |
 | **Preprod** | [midnight-tmnight-preprod.nethermind.dev](https://midnight-tmnight-preprod.nethermind.dev) | `https://indexer.preprod.midnight.network/api/v4/graphql` |
 
-### Step by step
-
 ```bash
-# 1. Start the proof server (both networks use the local one on :6300)
+# 1. Proof server (both networks use the local one on :6300)
 docker compose up -d proof-server
 curl http://127.0.0.1:6300        # → {"status":"ok",...}
 
-# 2. Deploy to Preview
-NODE_OPTIONS="--max-old-space-size=12288" npm run deploy -- --network preview
-```
-
-The run does this, in order:
-
-1. Syncs the wallet with the network (**several minutes on first run**; later runs
-   resume from the checkpoint in `.midnight-wallet-state/`).
-2. Prints `Wallet Address:` and `Balance: 0 tNight`.
-3. Prints the faucet URL and starts polling.
-
-**➡️ Now open the faucet, paste the printed address, and request tNIGHT.**
-
-The deploy then registers the funds for DUST generation, waits for DUST, generates
-proofs against the local proof server, deploys, and finally prints:
-
-```
-✅ Contract deployed successfully!
-
-Contract Address: <address>
-```
-
-4. Repeat for Preprod:
-
-```bash
+# 2. Deploy
 NODE_OPTIONS="--max-old-space-size=12288" npm run deploy -- --network preprod
 ```
 
-5. Paste both addresses into the [Contract Address](#contract-address) table at the
-top of this README. They are also recorded in `.midnight-state.json`, and you can
-re-print the last one any time with `npm run network`.
+The run syncs the wallet (**several minutes on first run**; later runs resume from the
+checkpoint in `.midnight-wallet-state/`), prints the address and balance, then generates
+proofs, deploys, and prints the contract address. Paste it into the
+[Contract Address](#contract-address) table.
 
-### If funding times out
+If funding times out, the wallet seed is preserved — just re-run the same command, or
+extend the window with `MIDNIGHT_FAUCET_TIMEOUT_MS=1800000`.
 
-The wallet seed is preserved, so simply re-run the same deploy command — the wallet
-sync resumes from its checkpoint instead of starting over. To extend the wait window:
-
-```bash
-# default is 600000 ms (10 minutes)
-MIDNIGHT_FAUCET_TIMEOUT_MS=1800000 npm run deploy -- --network preview
-```
-
-To get a network's wallet address up front — so you can fund it *before* sitting
-through the first sync — derive it straight from the seed:
-
-```bash
-npm run address -- --network preview
-npm run address -- --network preprod
-```
-
-This creates and persists the wallet for that network, so it is the same address
-the deploy will later use. Once you have deployed, `npm run network` re-prints the
-active network and its last deployment, and `npm run check-balance` shows the
-wallet balance.
-
-## Contract Architecture
+### Contract architecture
 
 ```
 contracts/
@@ -342,26 +617,23 @@ contracts/
     └── zkir/               # Zero-knowledge intermediate representation
 ```
 
-### Circuits
+### Public ledger state
 
-| Circuit | Type | Description |
-|---|---|---|
-| `castVote` | Impure | Cast a private vote (updates ledger state) |
-| `openElection` | Impure | Open voting |
-| `closeElection` | Impure | Close voting |
-| `isElectionOpen` | Impure | Check election status |
-| `deriveVoterCommitment` | Pure | Derive commitment from voter secret |
-| `deriveNullifier` | Pure | Derive nullifier from voter secret |
+```compact
+export ledger electionId: Opaque<"string">;
+export ledger electionOpen: Boolean;
+export ledger totalVotes: Counter;
+export ledger candidateAVotes: Counter;
+export ledger candidateBVotes: Counter;
+export ledger nullifierSpent: Map<Nullifier, Boolean>;
 
-## Initial Idea
+witness getVoterSecret(): VoterSecret;
+```
 
-Midnight Ballot was born from a simple question: **can we build a voting system where every vote is counted, but no vote can be traced back to a voter?**
+The full contract, including the reasoning behind each `disclose()`, is in
+[`contracts/ballot.compact`](contracts/ballot.compact).
 
-Traditional electronic voting systems force a trade-off between transparency and privacy. You can have a public ledger where anyone can verify the tally, but then individual votes are exposed. Or you can encrypt votes, but then the tally can't be independently verified without complex cryptographic ceremonies.
-
-Zero-knowledge proofs flip this trade-off on its head. With Midnight's Compact language, you can write a smart contract where a voter proves "I am eligible and I cast exactly one valid vote" without ever revealing which candidate they chose. The blockchain stores only what the public needs to see: the election status and the aggregate tally. Everything else — voter identity, ballot choice, private credentials — stays in the voter's local DApp.
-
-This project is a proof-of-concept for confidential on-chain governance. The same pattern — prove eligibility without revealing identity, prove a valid action without revealing which action — extends to DAOs, shareholder voting, surveys, and anywhere else privacy and verifiability need to coexist.
+---
 
 ## Screenshots
 
@@ -408,42 +680,12 @@ compiler  contract  keys  zkir
 $ npm test
 > npx tsx --test tests/ballot.test.ts
 
-▶ Midnight Ballot — contract source
-  ✔ declares public ledger state for the election and the tallies
-  ✔ declares a private witness as a circuit input
-  ✔ never stores the witness value in ledger state
-  ✔ discloses deliberately: the nullifier and the tally branch only
-  ✔ guards castVote on election state and on a fresh nullifier
-  ✔ updates the total plus exactly one candidate tally
-  ✔ documents what is public and what is private in the header comment
-  ✔ uses the domain-separation tags the reference model reproduces
-✔ Midnight Ballot — contract source
-▶ Midnight Ballot — ledger semantics (reference model)
-  ✔ initialises with a zeroed, open election
-  ✔ counts a vote for candidate A in the total and in A only
-  ✔ counts a vote for candidate B
-  ✔ counts different voters separately and keeps both nullifiers
-  ✔ rejects a second vote from the same voter
-  ✔ rejects votes while the election is closed, and accepts them again after reopening
-  ✔ keeps no trace of voter secrets anywhere in the ledger
-✔ Midnight Ballot — ledger semantics (reference model)
-▶ Midnight Ballot — privacy model
-  ✔ derives a deterministic 32-byte commitment from a voter secret
-  ✔ gives every voter a distinct commitment
-  ✔ derives a deterministic nullifier that domain separation keeps distinct from the commitment
-  ✔ leaves the nullifier one-way: it never equals or contains the secret
-✔ Midnight Ballot — privacy model
+▶ Midnight Ballot — contract source (8 passed)
+▶ Midnight Ballot — ledger semantics (reference model) (7 passed)
+▶ Midnight Ballot — privacy model (4 passed)
 ▶ Midnight Ballot — compiled circuits
   ▶ pure circuits (4 passed)
   ▶ state transitions (8 passed)
-    ✔ initialises an open election with empty tallies
-    ✔ reports the election as open right after initialisation
-    ✔ closes and reopens the election
-    ✔ casts a vote for candidate A and increments exactly one tally
-    ✔ casts a vote for candidate B and increments exactly one tally
-    ✔ rejects a second vote from the same voter
-    ✔ rejects a vote while the election is closed
-    ✔ lets different voters each cast one vote
 ✔ Midnight Ballot — compiled circuits
 
 ℹ tests 31
@@ -483,4 +725,60 @@ Deployed At:      2026-09-22T23:07:02.302Z
 
 ---
 
-Built for the [Midnight Builder Challenge](https://risein.com) — Level 1
+### dApp
+
+_Add `docs/screenshots/04-dapp.png` here after deploying and recording the demo — the
+wallet address, the live tally, and a finalized ballot:_
+
+```markdown
+![Midnight Ballot dApp](docs/screenshots/04-dapp.png)
+```
+
+---
+
+## Initial Idea
+
+Midnight Ballot was born from a simple question: **can we build a voting system where
+every vote is counted, but no vote can be traced back to a voter?**
+
+Traditional electronic voting systems force a trade-off between transparency and
+privacy. You can have a public ledger where anyone can verify the tally, but then
+individual votes are exposed. Or you can encrypt votes, but then the tally can't be
+independently verified without complex cryptographic ceremonies.
+
+Zero-knowledge proofs flip this trade-off on its head. With Midnight's Compact language,
+you can write a smart contract where a voter proves "I am eligible and I cast exactly one
+valid vote" without ever revealing which candidate they chose. The blockchain stores only
+what the public needs to see: the election status and the aggregate tally. Everything
+else — voter identity, ballot choice, private credentials — stays in the voter's local
+DApp.
+
+This project is a proof-of-concept for confidential on-chain governance. The same
+pattern — prove eligibility without revealing identity, prove a valid action without
+revealing which action — extends to DAOs, shareholder voting, surveys, and anywhere else
+privacy and verifiability need to coexist.
+
+---
+
+## Scripts
+
+| Command | Description |
+|---|---|
+| `npm run dev` | Start the dApp on http://localhost:5173 |
+| `npm run build` | Type check both projects, then build the dApp into `dist/` |
+| `npm run preview` | Serve the production build locally |
+| `npm run typecheck` | Type check the Node toolchain and the browser dApp |
+| `npm test` | Run the 31 contract tests |
+| `npm run compile` | Compile the Compact contract |
+| `npm run deploy -- --network preprod` | Deploy the contract |
+| `npm run address -- --network preprod` | Print the deployer address without syncing |
+| `npm run cli` | Interactive CLI against the deployed contract |
+| `npm run check-balance` | Show wallet balances |
+| `npm run test:e2e` | End-to-end check against the deployed contract |
+| `npm run proof-server:start` / `:stop` | Control the local proof server |
+| `npm run network` | Show the active network and last deployment |
+| `npm run clean` | Remove build output and local state |
+
+---
+
+Built for the [Midnight Builder Challenge](https://risein.com) — Levels 1 & 2.
