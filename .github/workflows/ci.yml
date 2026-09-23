@@ -50,3 +50,12 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+      # Type checks the Node toolchain and the browser dApp (separate tsconfigs),
+      # then builds the dApp. Catches SDK/provider drift that unit tests cannot,
+      # since `npm test` never imports the browser entry points.
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Build dApp
+        run: npm run build:frontend
