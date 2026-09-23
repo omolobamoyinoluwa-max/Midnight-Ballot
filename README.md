@@ -9,16 +9,38 @@ one-way nullifier reach the chain.
 
 ---
 
+## Deliverable Status
+
+| Level 2 requirement | Status |
+|---|---|
+| Lace wallet connect and disconnect | ✅ `src/components/WalletConnect.tsx` — distinct states for wallet not installed, request rejected, and wrong network |
+| Circuit called from the frontend, proof generated locally | ✅ `src/components/CircuitCall.tsx` → `castVote`; proving is delegated to the wallet, which proves on the user's own machine |
+| Private input never shown in the UI | ✅ no prop or state path carries the credential; the only derived value displayed is the nullifier, which the contract publishes on-chain anyway |
+| Contract address in `README.md` | ✅ [Contract Address](#contract-address) — Preprod and Preview |
+| Live demo link in `README.md` | ✅ [Live Demo](#live-demo) |
+| Privacy Claim section in `README.md` | ✅ [Privacy Claim](#privacy-claim) |
+| File structure matches the spec | ✅ [File Structure](#file-structure) — one documented addition (`src/midnight.ts`) |
+| Frontend deployed | ✅ Vercel project `midnight-ballot`, auto-deploying on push to `main` — see [Verification](#verification) |
+| Demo video recorded | ⬜ **pending** — [timed script ready](docs/DEMO_SCRIPT.md), [placeholder in place](#demo-video) |
+
+---
+
 ## Live Demo
 
-> **https://midnight-ballot-one.vercel.app**
+### **[midnight-ballot-one.vercel.app](https://midnight-ballot-one.vercel.app)**
 
-The deployed site connects to the **Preprod** contract below with no extra configuration —
-the address is the build default. The compiled circuit artifacts it fetches are served
-from the same origin at `/zk/ballot/keys/*` and `/zk/ballot/zkir/*`.
+| | |
+|---|---|
+| Platform | Vercel |
+| Project | `midnight-ballot` (`prj_bIoqAf7u6pchuTKnIH2L83wT9RiR`) |
+| Source | connected to this GitHub repo — pushes to `main` redeploy automatically |
+| Network | Midnight **Preprod** (build default; no platform env vars needed) |
+| Verified | 2026-09-23 — see [Verification](#verification) |
 
-Requires the Lace wallet for Midnight, switched to **Preprod**. Deploy commands are in
-[Deploy the frontend](#deploy-the-frontend).
+Requires the Lace wallet for Midnight, switched to **Preprod**. The deployed site connects
+to the contract below with no extra configuration — the address is the build default — and
+fetches its circuit artifacts from the same origin at `/zk/ballot/keys/*` and
+`/zk/ballot/zkir/*`. Deploy commands are in [Deploy the frontend](#deploy-the-frontend).
 
 ---
 
@@ -228,13 +250,19 @@ midnight-ballot/
 ├── tests/
 │   └── ballot.test.ts              # 31 tests (source assertions, ledger model, circuits)
 ├── scripts/                        # print-address, e2e-check
+├── docs/
+│   ├── screenshots/                # build, test and deployment evidence
+│   └── DEMO_SCRIPT.md              # timed demo video narration
 ├── public/
 │   └── favicon.svg
 ├── .github/workflows/              # CI: compile → test → typecheck → build
 ├── index.html                      # Vite entry
 ├── vite.config.ts                  # serves contracts/managed as /zk/ballot
+├── tsconfig.json                   # Node toolchain (Level 1)
+├── tsconfig.app.json               # browser dApp
 ├── vercel.json                     # Vercel deploy config
 ├── netlify.toml                    # Netlify deploy config
+├── .nvmrc                          # pins Node 22
 └── package.json
 ```
 
@@ -397,6 +425,56 @@ Target: **under 2 minutes.** Four beats:
 Optional 10-second bonus if there is time: vote a second time and let the contract reject
 it with *"already cast a ballot"*, then hit **new voter credential** and vote again as a
 second unlinkable voter.
+
+**Word-for-word narration, timed against those four beats, is in
+[`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md)** — including the setup checklist and the one
+thing not to film (the credential is in `localStorage` by design; opening DevTools to
+display it would undercut the claim the demo exists to show).
+
+---
+
+## Verification
+
+Run against the committed tree and the live deployment. Everything here is reproducible.
+
+### Live deployment
+
+Checked against `https://midnight-ballot-one.vercel.app` on 2026-09-23.
+
+| Check | Result |
+|---|---|
+| `GET /` | `200` `text/html` |
+| `GET /zk/ballot/keys/<circuit>.prover` — all 4 circuits | `200` — `castVote` 2,820,439 B, `openElection` 14,062 B, `closeElection` 14,070 B, `isElectionOpen` 22,399 B |
+| `GET /zk/ballot/keys/<circuit>.verifier` — all 4 circuits | `200` |
+| `GET /zk/ballot/zkir/castVote.bzkir` | `200`, 389 B |
+| `GET /assets/midnight_ledger_wasm_bg-*.wasm` | `200` `application/wasm`, 10,143,782 B |
+| `GET /zk/ballot/keys/nope.prover` | `404` — a missing artifact must not answer `200` with the SPA page |
+
+The served `castVote.prover` is **byte-identical** to
+`contracts/managed/ballot/keys/castVote.prover`, so the dApp proves against the same circuit
+the deployed Preprod contract verifies against.
+
+```bash
+# reproduce the live checks
+BASE=https://midnight-ballot-one.vercel.app
+curl -sS -o /dev/null -w '%{http_code} %{size_download}\n' "$BASE/zk/ballot/keys/castVote.prover"
+curl -sS -o /dev/null -w '%{http_code} %{size_download}\n' "$BASE/zk/ballot/zkir/castVote.bzkir"
+```
+
+### Local
+
+| Command | Result |
+|---|---|
+| `npm run typecheck` | ✅ passes — Node toolchain and browser dApp, checked separately |
+| `npm test` | ✅ 31 tests, 31 pass, 0 fail, 0 skipped |
+| `npm run build` | ✅ builds `dist/` and emits both WASM assets plus every ZK artifact |
+
+### What this does *not* cover
+
+The wallet handshake, live proof generation and on-chain submission need a real Lace wallet
+with a funded Preprod account, so they are exercised by the [demo video](#demo-video) rather
+than by an automated test. That is the honest boundary of what this repo can assert on its
+own — `npm test` never imports the browser entry points.
 
 ---
 
