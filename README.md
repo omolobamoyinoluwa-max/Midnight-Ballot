@@ -249,7 +249,7 @@ midnight-ballot/
 │   ├── deploy.ts, cli.ts, network.ts, wallet.ts, wallet-state.ts
 ├── tests/
 │   └── ballot.test.ts              # 31 tests (source assertions, ledger model, circuits)
-├── scripts/                        # print-address, e2e-check
+├── scripts/                        # print-address, e2e-check, browser-check
 ├── docs/
 │   ├── screenshots/                # build, test and deployment evidence
 │   └── DEMO_SCRIPT.md              # timed demo video narration
@@ -469,12 +469,52 @@ curl -sS -o /dev/null -w '%{http_code} %{size_download}\n' "$BASE/zk/ballot/zkir
 | `npm test` | ✅ 31 tests, 31 pass, 0 fail, 0 skipped |
 | `npm run build` | ✅ builds `dist/` and emits both WASM assets plus every ZK artifact |
 
+### Browser — the live deployment, rendered
+
+```bash
+npm run check:browser
+```
+
+Loads the deployed site in Chromium and asserts on the rendered DOM. It exists because it
+sees three things nothing else here can: a Node-only global in the browser bundle, a page
+that dies before React mounts (a `200` with an empty `#root`), and the audit criterion
+itself — whether the private input reaches the DOM.
+
+```
+— page —                    ✓ HTTP 200        ✓ React mounted
+— Node globals the SDK needs ✓ Buffer present  ✓ from(hex,'hex') decodes  ✓ toString('hex') encodes
+— WASM —                    ✓ both modules loaded (ledger + onchain runtime)
+— credential round-trip —    ✓ pre-seeded credential recognised as held
+— PRIVATE INPUT NEVER SHOWN  ✓ not in rendered text   ✓ not anywhere in the DOM
+                            ✓ no `voterSecret`        ✓ no `getVoterSecret`
+                            ✓ no stray 64-char hex in visible text
+— required UI —              ✓ 7 checks
+— runtime errors —           ✓ none of any kind
+```
+
+Playwright is deliberately **not** a project dependency:
+
+```bash
+npm i -D playwright && npx playwright install chromium
+npm run check:browser                                # live deployment
+TARGET=http://127.0.0.1:4173 npm run check:browser    # a local `npm run preview`
+```
+
+**This check has already earned its keep.** Its first run found a fatal bug: Midnight's SDK
+calls `Buffer.from(...)` to convert hex, and there is no `Buffer` in a browser — so the
+credential store, the vote path (`toHex(tx.serialize())` at both balance and submit) and the
+tally read all threw `ReferenceError`. TypeScript accepted it because `@types/node` declares
+`Buffer`, the build succeeded because a bare global is not a resolution failure, and the Node
+suite passed because in Node `Buffer` genuinely exists. Fixing it required
+[`src/polyfills.ts`](src/polyfills.ts); the three `Buffer` assertions above are the guard.
+
 ### What this does *not* cover
 
 The wallet handshake, live proof generation and on-chain submission need a real Lace wallet
 with a funded Preprod account, so they are exercised by the [demo video](#demo-video) rather
-than by an automated test. That is the honest boundary of what this repo can assert on its
-own — `npm test` never imports the browser entry points.
+than by an automated check. That is the honest boundary of what this repo can assert on its
+own — `npm test` never imports the browser entry points, and the browser check runs without
+a wallet, which is exactly why it cannot reach those paths.
 
 ---
 
@@ -805,12 +845,10 @@ Deployed At:      2026-09-22T23:07:02.302Z
 
 ### dApp
 
-_Add `docs/screenshots/04-dapp.png` here after deploying and recording the demo — the
-wallet address, the live tally, and a finalized ballot:_
-
-```markdown
 ![Midnight Ballot dApp](docs/screenshots/04-dapp.png)
-```
+
+The live deployment in its **disconnected** state — what every visitor sees before
+connecting a wallet. Captured from the deployed site by `npm run check:browser`.
 
 ---
 
@@ -853,6 +891,7 @@ privacy and verifiability need to coexist.
 | `npm run cli` | Interactive CLI against the deployed contract |
 | `npm run check-balance` | Show wallet balances |
 | `npm run test:e2e` | End-to-end check against the deployed contract |
+| `npm run check:browser` | Render the live dApp in Chromium and assert the UI and privacy criteria (needs Playwright) |
 | `npm run proof-server:start` / `:stop` | Control the local proof server |
 | `npm run network` | Show the active network and last deployment |
 | `npm run clean` | Remove build output and local state |
