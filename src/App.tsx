@@ -173,7 +173,8 @@ function App() {
               <h3>Private, stays in this browser</h3>
               <ul>
                 <li>
-                  Your voter credential — <code>voterSecret</code>, a 32-byte witness
+                  Your voter credential — a single private witness value, 32 bytes. It is
+                  never displayed, logged, or transmitted.
                 </li>
               </ul>
             </div>
