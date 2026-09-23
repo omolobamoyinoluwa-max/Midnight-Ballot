@@ -22,6 +22,7 @@
   "include": [
     "src/App.tsx",
     "src/main.tsx",
+    "src/polyfills.ts",
     "src/vite-env.d.ts",
     "src/midnight.ts",
     "src/hooks/**/*.ts",

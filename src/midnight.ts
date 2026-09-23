@@ -266,16 +266,47 @@ function isValidSecret(bytes: Uint8Array): boolean {
   return bytes.length === 32;
 }
 
+/**
+ * Report a credential-storage failure once per session.
+ *
+ * These paths used to swallow their errors, which is how a fatal
+ * `Buffer is not defined` inside `toHex`/`fromHex` stayed invisible: persistence
+ * quietly did nothing while the UI reported "not yet created". A credential that
+ * cannot be persisted or read back is a real degradation, so it is said out loud
+ * rather than hidden — the in-memory copy still covers the session.
+ */
+const reportedStorageFailures = new Set<string>();
+
+function warnStorageFailure(context: string, err: unknown): void {
+  if (reportedStorageFailures.has(context)) return;
+  reportedStorageFailures.add(context);
+  const detail = err instanceof Error ? err.message : String(err);
+  console.warn(
+    `[midnight-ballot] Voter credential storage failed during ${context}: ${detail}. ` +
+      'The credential is still held in memory for this session, but it will not survive a reload.',
+  );
+}
+
 function readStoredVoterSecret(): Uint8Array | null {
   const storage = voterSecretStorage();
   if (!storage) return inMemoryVoterSecret;
 
+  let raw: string | null;
   try {
-    const raw = storage.getItem(VOTER_SECRET_STORAGE_KEY);
-    if (!raw) return null;
+    raw = storage.getItem(VOTER_SECRET_STORAGE_KEY);
+  } catch (err) {
+    warnStorageFailure('read', err);
+    return inMemoryVoterSecret;
+  }
+  if (!raw) return null;
+
+  try {
     const bytes = fromHex(raw);
     return isValidSecret(bytes) ? bytes : null;
-  } catch {
+  } catch (err) {
+    // A stored value we cannot decode is worse than none: it would silently mint
+    // a second voter and make the double-vote guard look broken.
+    warnStorageFailure('decode', err);
     return null;
   }
 }
@@ -286,8 +317,8 @@ function writeVoterSecret(secret: Uint8Array): void {
   if (!storage) return;
   try {
     storage.setItem(VOTER_SECRET_STORAGE_KEY, toHex(secret));
-  } catch {
-    // Storage full or blocked — the in-memory copy still covers this session.
+  } catch (err) {
+    warnStorageFailure('write', err);
   }
 }
 

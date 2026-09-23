@@ -1,3 +1,7 @@
+// First import, deliberately: it installs the `Buffer` global that Midnight's
+// SDK relies on. See the comment in polyfills.ts for what breaks without it.
+import './polyfills';
+
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 

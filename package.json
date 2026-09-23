@@ -25,7 +25,8 @@
     "proof-server:stop": "docker compose down",
     "clean": "rm -rf contracts/managed .midnight-state.json .midnight-wallet-state",
     "test": "npx tsx --test tests/ballot.test.ts",
-    "test:e2e": "npx tsx scripts/e2e-check.ts"
+    "test:e2e": "npx tsx scripts/e2e-check.ts",
+    "check:browser": "node scripts/browser-check.mjs"
   },
   "dependencies": {
     "@midnight-ntwrk/compact-runtime": "0.16.0",
@@ -41,6 +42,7 @@
     "@midnight-ntwrk/midnight-js-types": "4.1.1",
     "@midnight-ntwrk/midnight-js-utils": "4.1.1",
     "@midnight-ntwrk/wallet-sdk": "1.2.0",
+    "buffer": "^6.0.3",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "rxjs": "^7.8.2",
