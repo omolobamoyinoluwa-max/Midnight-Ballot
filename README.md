@@ -21,7 +21,7 @@ one-way nullifier reach the chain.
 | Privacy Claim section in `README.md` | ✅ [Privacy Claim](#privacy-claim) |
 | File structure matches the spec | ✅ [File Structure](#file-structure) — one documented addition (`src/midnight.ts`) |
 | Frontend deployed | ✅ Vercel project `midnight-ballot`, auto-deploying on push to `main` — see [Verification](#verification) |
-| Demo video recorded | ⬜ **pending** — [timed script ready](docs/DEMO_SCRIPT.md), [placeholder in place](#demo-video) |
+| Demo video recorded | ✅ [Demo video](docs/demo-video.webm), [timed script](docs/DEMO_SCRIPT.md) |
 
 ---
 
@@ -411,7 +411,7 @@ Settings come from `netlify.toml` (`command: npm run build`, `publish: dist`).
 
 ## Demo Video
 
-> **[PLACEHOLDER — I will add the link after recording]**
+> **[Watch the demo walkthrough](docs/demo-video.webm)** — a recorded session showing the wallet connection, circuit call with proof generation, and the privacy model.
 
 Target: **under 2 minutes.** Four beats:
 

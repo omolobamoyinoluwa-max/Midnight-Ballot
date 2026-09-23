@@ -71,7 +71,8 @@ page.on('requestfailed', (r) =>
 console.log(`\ntarget: ${TARGET}\n`);
 
 const response = await page.goto(TARGET, { waitUntil: 'load', timeout: 90_000 });
-await page.waitForTimeout(4000);
+await page.waitForSelector('#root > *', { timeout: 60_000 });
+await page.waitForTimeout(2000);
 
 console.log('— page —');
 check('HTTP 200', response?.status() === 200, `status ${response?.status()}`);

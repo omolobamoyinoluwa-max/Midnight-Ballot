@@ -556,6 +556,7 @@ export async function createBallotProviders(
     ),
     zkConfigProvider,
     proofProvider: {
+      ...proofProvider,
       proveTx: (unprovenTx, proveTxConfig) => {
         onStage('proving');
         return proofProvider.proveTx(unprovenTx, proveTxConfig);
