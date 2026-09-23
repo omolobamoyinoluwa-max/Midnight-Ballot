@@ -40,5 +40,13 @@ jobs:
       - name: Compile contract
         run: npm run compile
 
+      - name: Archive compiled circuits
+        uses: actions/upload-artifact@v4
+        with:
+          name: compiled-circuits
+          path: |
+            contracts/managed/
+            managed/
+
       - name: Run tests
         run: npm test

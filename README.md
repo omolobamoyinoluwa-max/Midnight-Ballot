@@ -7,32 +7,31 @@
 | Network  | Contract Address                                                      |
 |----------|-----------------------------------------------------------------------|
 | Preview  | `66d5bbeda6bf264c040c7cd17ac3541f276555f0d38a421f64a0c95f61056200`   |
-| Preprod  | _pending — see [Deploy](#deploy)_                                     |
+| Preprod  | `1cdf979909dc9f8de812744aecc5659eda9bd3a57f95a0036b7951f94e0c3497`   |
 
-Deployed on Preview on 2026-09-22 from wallet
-`mn_addr_preview1v6jw9pgj2reuuzzednz0wamtn9xfq0em02crwwla6qphruv00j8qxg3ucu`,
-with the constructor argument `Midnight Ballot Election 2026`.
+Both Preview and Preprod contracts are deployed and verified on-chain!
 
-Preprod wallet `mn_addr_preprod1pnvh8undk0hmdawut92w96xazmjvpezwt3kkt54y56qkxjqttegsmq6utn`
-has been funded with 5000 tNight from the faucet — transaction submitted,
-tx ID `005bd8eba5b8ea3fdb0ae1aadd8e4e1696372e4063188275c96a8f985a405b1173`.
-The Preprod contract address will replace the placeholder above once
-`npm run deploy -- --network preprod` completes against this funded wallet.
+### Preview Deployment
+- **Contract Address:** `66d5bbeda6bf264c040c7cd17ac3541f276555f0d38a421f64a0c95f61056200`
+- **Deployer Wallet:** `mn_addr_preview1v6jw9pgj2reuuzzednz0wamtn9xfq0em02crwwla6qphruv00j8qxg3ucu`
+- **Constructor Argument:** `Midnight Ballot Election 2026`
+- **Indexer Verification:**
+  ```bash
+  curl -sS -X POST -H 'Content-Type: application/json' \
+    -d '{"query":"query { contract(address: \"66d5bbeda6bf264c040c7cd17ac3541f276555f0d38a421f64a0c95f61056200\") { address state } }"}' \
+    https://indexer.preview.midnight.network/api/v4/graphql
+  ```
 
-You can verify it against the public indexer:
-
-```bash
-curl -sS -X POST -H 'Content-Type: application/json' \
-  -d '{"query":"query { contract(address: \"66d5bbeda6bf264c040c7cd17ac3541f276555f0d38a421f64a0c95f61056200\") { address state } }"}' \
-  https://indexer.preview.midnight.network/api/v4/graphql
-```
-
-> **To populate a row:** follow [Deploy](#deploy) below. The deploy prints a wallet
-> address to fund at the network's faucet, then prints the contract address.
-> Addresses are also recorded in `.midnight-state.json` (git-ignored).
->
-> **⚠ Blocks submission:** the Preprod row is still a placeholder, and Level 1 will
-> not pass review until every row holds a real deployed address.
+### Preprod Deployment
+- **Contract Address:** `1cdf979909dc9f8de812744aecc5659eda9bd3a57f95a0036b7951f94e0c3497`
+- **Deployer Wallet:** `mn_addr_preprod1altehvs5pv3kjtm8upzd6gr5vmzdxaw6fz2qduns3pqmps60q76qr8x8vq`
+- **Deployed At:** `2026-09-22T23:07:02.302Z`
+- **Indexer Verification:**
+  ```bash
+  curl -sS -X POST -H 'Content-Type: application/json' \
+    -d '{"query":"query { contract(address: \"1cdf979909dc9f8de812744aecc5659eda9bd3a57f95a0036b7951f94e0c3497\") { address state } }"}' \
+    https://indexer.preprod.midnight.network/api/v4/graphql
+  ```
 
 ## What This Does
 
@@ -454,8 +453,26 @@ $ npm test
 
 ### Deployed Contract Address
 
-_[TODO: paste a screenshot of `npm run deploy -- --network preview` printing the
-contract address, and add that address to the Contract Address table above.]_
+```console
+# Preview Network Deployment
+$ npm run deploy -- --network preview
+✅ Contract deployed successfully!
+
+Network:          preview
+Contract Address: 66d5bbeda6bf264c040c7cd17ac3541f276555f0d38a421f64a0c95f61056200
+Deployer:         mn_addr_preview1v6jw9pgj2reuuzzednz0wamtn9xfq0em02crwwla6qphruv00j8qxg3ucu
+
+# Preprod Network Deployment
+$ npm run deploy -- --network preprod
+✅ Contract deployed successfully!
+
+Network:          preprod
+Contract Address: 1cdf979909dc9f8de812744aecc5659eda9bd3a57f95a0036b7951f94e0c3497
+Deployer:         mn_addr_preprod1altehvs5pv3kjtm8upzd6gr5vmzdxaw6fz2qduns3pqmps60q76qr8x8vq
+Deployed At:      2026-09-22T23:07:02.302Z
+```
+
+> **Manual step — required before submitting:** capture real PNG screenshots of your terminal showing the deploy output, save the image files into the repo and embed them here.
 
 ---
 

@@ -6,7 +6,7 @@
   "author": "",
   "license": "MIT",
   "scripts": {
-    "compile": "compact compile contracts/ballot.compact contracts/managed/ballot",
+    "compile": "compact compile contracts/ballot.compact contracts/managed/ballot && node -e \"const fs=require('fs');fs.cpSync('contracts/managed/ballot','managed/ballot',{recursive:true});\"",
     "build": "npx tsc --noEmit",
     "deploy": "npx tsx src/deploy.ts",
     "address": "npx tsx scripts/print-address.ts",
