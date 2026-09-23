@@ -7,7 +7,15 @@
   "license": "MIT",
   "scripts": {
     "compile": "compact compile contracts/ballot.compact contracts/managed/ballot && node -e \"const fs=require('fs');fs.cpSync('contracts/managed/ballot','managed/ballot',{recursive:true});\"",
-    "build": "npx tsc --noEmit",
+    "dev": "vite",
+    "build": "npm run typecheck && npm run build:frontend",
+    "build:frontend": "vite build",
+    "preview": "vite preview",
+    "typecheck": "npm run typecheck:node && npm run typecheck:app",
+    "typecheck:node": "tsc --noEmit",
+    "typecheck:app": "tsc -p tsconfig.app.json --noEmit",
+    "deploy:vercel": "vercel --prod",
+    "deploy:netlify": "netlify deploy --prod --dir=dist",
     "deploy": "npx tsx src/deploy.ts",
     "address": "npx tsx scripts/print-address.ts",
     "cli": "npx tsx src/cli.ts",
@@ -21,7 +29,9 @@
   },
   "dependencies": {
     "@midnight-ntwrk/compact-runtime": "0.16.0",
+    "@midnight-ntwrk/dapp-connector-api": "^4.0.1",
     "@midnight-ntwrk/midnight-js-contracts": "4.1.1",
+    "@midnight-ntwrk/midnight-js-fetch-zk-config-provider": "^4.1.1",
     "@midnight-ntwrk/midnight-js-http-client-proof-provider": "4.1.1",
     "@midnight-ntwrk/midnight-js-indexer-public-data-provider": "4.1.1",
     "@midnight-ntwrk/midnight-js-level-private-state-provider": "4.1.1",
@@ -31,17 +41,30 @@
     "@midnight-ntwrk/midnight-js-types": "4.1.1",
     "@midnight-ntwrk/midnight-js-utils": "4.1.1",
     "@midnight-ntwrk/wallet-sdk": "1.2.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
     "rxjs": "^7.8.2",
     "ws": "^8.21.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^5.2.0",
     "tsx": "^4.23.1",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vite": "^7.3.6",
+    "vite-plugin-wasm": "^3.6.0"
   },
   "engines": {
     "node": ">=22.0.0"
   },
-  "keywords": ["midnight", "blockchain", "zero-knowledge", "privacy", "voting"]
+  "keywords": [
+    "midnight",
+    "blockchain",
+    "zero-knowledge",
+    "privacy",
+    "voting"
+  ]
 }
