@@ -104,6 +104,8 @@ export type WalletErrorCode =
   | 'network-mismatch'
   /** The wallet exposed no way to generate proofs. */
   | 'no-prover'
+  /** A prover was configured but the network call to it failed. */
+  | 'prover-unreachable'
   /** Anything else — the original message is preserved. */
   | 'unknown';
 
@@ -121,6 +123,28 @@ export class WalletError extends Error {
 function messageOf(cause: unknown): string {
   if (cause instanceof Error) return cause.message;
   return String(cause);
+}
+
+/**
+ * The one failure the SDK reports badly.
+ *
+ * A proof server that is not running surfaces as `TypeError: Failed to fetch`,
+ * wrapped in *"Unexpected error submitting scoped transaction"* — true, and
+ * completely useless to a voter. Nothing in that string says which service is
+ * down or what to start, so the message is replaced at the point where we still
+ * know a proof was being generated.
+ */
+const PROVER_UNREACHABLE_HELP =
+  'A proof could not be generated because the proof server could not be reached. ' +
+  'Proof generation needs a running prover: start the local one with ' +
+  '`docker compose up -d proof-server`, confirm `curl http://127.0.0.1:6300` ' +
+  'returns {"status":"ok"}, then reload this page and try again.';
+
+/** Does this read as a network-level failure to reach a service? */
+function looksUnreachable(raw: string): boolean {
+  return /failed to fetch|networkerror|load failed|fetch failed|econnrefused|connection refused|econnreset/i.test(
+    raw,
+  );
 }
 
 // ─── Wallet discovery + connection ───────────────────────────────────────────
@@ -557,9 +581,19 @@ export async function createBallotProviders(
     zkConfigProvider,
     proofProvider: {
       ...proofProvider,
-      proveTx: (unprovenTx, proveTxConfig) => {
+      // An unreachable prover is the failure users hit most often, so it gets a
+      // message that names the cause and the fix rather than the SDK's raw
+      // "Failed to fetch". Anything else is rethrown untouched.
+      proveTx: async (unprovenTx, proveTxConfig) => {
         onStage('proving');
-        return proofProvider.proveTx(unprovenTx, proveTxConfig);
+        try {
+          return await proofProvider.proveTx(unprovenTx, proveTxConfig);
+        } catch (cause) {
+          if (looksUnreachable(messageOf(cause))) {
+            throw new WalletError('prover-unreachable', PROVER_UNREACHABLE_HELP, { cause });
+          }
+          throw cause;
+        }
       },
     },
     // The wallet is the trust boundary: it holds the keys and pays the fee, so

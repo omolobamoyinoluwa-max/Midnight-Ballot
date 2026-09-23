@@ -25,6 +25,7 @@ import {
   openBallot,
   readElection,
   rotateVoterSecret,
+  WalletError,
   type BallotProviders,
   type CandidateId,
   type ElectionSnapshot,
@@ -92,6 +93,13 @@ function messageOf(cause: unknown): string {
  * *expected* outcomes rather than bugs, so they get purpose-written copy.
  */
 function describeVoteFailure(cause: unknown): string {
+  // The prover is an infrastructure dependency, not a contract decision. It
+  // already carries a message that names the cause and the fix, so pass it
+  // straight through rather than re-describing it here.
+  if (cause instanceof WalletError && cause.code === 'prover-unreachable') {
+    return cause.message;
+  }
+
   const raw = messageOf(cause);
   if (/already cast a ballot/i.test(raw)) {
     return 'This credential has already voted. The contract rejected the second ballot because its nullifier is already spent on-chain — one voter, one vote, with no identity revealed.';
