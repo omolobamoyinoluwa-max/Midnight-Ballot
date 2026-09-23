@@ -1,6 +1,5 @@
 node_modules/
 dist/
-contracts/managed/
 .midnight-state.json
 .midnight-wallet-state
 .midnight-wallet-state-dir/
