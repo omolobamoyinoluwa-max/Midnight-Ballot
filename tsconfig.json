@@ -13,5 +13,19 @@
     "noEmit": true
   },
   "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"],
-  "exclude": ["node_modules", "dist", "contracts/managed"]
+  // The browser dApp under src/components, src/hooks, src/midnight.ts, src/App.tsx,
+  // src/main.tsx and vite.config.ts targets DOM + JSX and is type checked by
+  // tsconfig.app.json instead. Everything else in src/ is the Node toolchain
+  // (deploy, CLI, e2e) and stays on this project's Node lib/types.
+  "exclude": [
+    "node_modules",
+    "dist",
+    "contracts/managed",
+    "src/components",
+    "src/hooks",
+    "src/midnight.ts",
+    "src/App.tsx",
+    "src/main.tsx",
+    "vite.config.ts"
+  ]
 }

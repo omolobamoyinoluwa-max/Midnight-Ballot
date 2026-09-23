@@ -1,0 +1,32 @@
+{
+  "//": "Type checking for the browser dApp only. The Node scripts (deploy, CLI, e2e) are type checked by the root tsconfig.json — the two targets have incompatible lib/types and are deliberately kept apart.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "verbatimModuleSyntax": true,
+    "types": ["vite/client", "node"]
+  },
+  "include": [
+    "src/App.tsx",
+    "src/main.tsx",
+    "src/vite-env.d.ts",
+    "src/midnight.ts",
+    "src/hooks/**/*.ts",
+    "src/components/**/*.tsx",
+    "vite.config.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}
