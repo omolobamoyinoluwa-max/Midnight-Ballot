@@ -909,3 +909,6 @@ The GitHub Actions pipeline automatically runs on every push and pull request to
 
 ## Product Proposal
 See [PROPOSAL.md](PROPOSAL.md)
+
+## Level 3 Demo Video
+> **[Watch the Level 3 Demo Walkthrough](docs/demo-video.webm)** - a recorded session showing the full dApp flow.
