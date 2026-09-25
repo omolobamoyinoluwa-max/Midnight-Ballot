@@ -1,5 +1,5 @@
 # Midnight Ballot
-
+![CI](https://github.com/omolobamoyinoluwa-max/Midnight-Ballot/actions/workflows/ci.yml/badge.svg)
 > A privacy-preserving voting dApp on the Midnight Network: cast a verifiable ballot on Preprod without revealing who you are or which tally you moved.
 
 A Compact smart contract holds the public election state, and a React + Vite frontend
@@ -899,3 +899,13 @@ privacy and verifiability need to coexist.
 ---
 
 Built for the [Midnight Builder Challenge](https://risein.com) — Levels 1 & 2.
+
+## Run Tests
+`ash
+npm test
+``n
+## CI/CD
+The GitHub Actions pipeline automatically runs on every push and pull request to the \main\ branch. It ensures stability by checking out the code, installing Node.js 22, downloading dependencies, verifying the Compact compiler, compiling the Midnight smart contract circuits, and running the full test suite and TypeScript type checks.
+
+## Product Proposal
+See [PROPOSAL.md](PROPOSAL.md)
